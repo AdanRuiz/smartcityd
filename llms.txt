@@ -1,0 +1,25 @@
+# SmartCity descentralizado
+
+> Especificación de una plataforma smart city sin servidor central. Los datos son eventos firmados (formato Nostr NIP-01) replicados en relays que cualquiera opera; el historial se archiva en snapshots por BitTorrent/IPFS sellados con OpenTimestamps; la app es una SPA React estática distribuida por torrent/IPFS con espejos en Vercel, Netlify y Cloudflare Pages. No se usa blockchain como base de datos.
+
+## Guía
+
+- [AGENTS.md](AGENTS.md): convenciones, invariantes y orden de lectura para agentes de IA
+- [README.md](README.md): resumen e índice
+
+## Especificación
+
+- [Visión y alcance](docs/spec/00-vision-y-alcance.md): objetivos, no-objetivos, actores, casos de uso
+- [Arquitectura](docs/spec/01-arquitectura.md): componentes, flujos, stack, estructura del repo
+- [Capa de datos](docs/spec/02-capa-de-datos.md): diseño de la base de datos descentralizada y por qué no blockchain
+- [Modelo de eventos](docs/spec/03-modelo-de-eventos.md): kinds, tags y esquemas JSON (normativo)
+- [Identidad y confianza](docs/spec/04-identidad-y-confianza.md): llaves, roles, anclas de confianza, anti-spam
+- [Integración de apps](docs/spec/05-integracion-de-apps.md): SDK, WebSocket y HTTP para apps y dispositivos
+- [Distribución y persistencia](docs/spec/06-distribucion-y-persistencia.md): torrent/IPFS, snapshots, releases
+- [Relay de referencia](docs/spec/07-relay-referencia.md): Cloudflare Workers + Durable Objects + D1
+- [Seguridad y privacidad](docs/spec/08-seguridad-y-privacidad.md): amenazas, datos personales, moderación
+
+## Opcional
+
+- [Roadmap](docs/spec/09-roadmap.md): fases y criterios de aceptación
+- [Decisiones](docs/spec/10-decisiones.md): ADRs y preguntas abiertas
