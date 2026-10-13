@@ -14,7 +14,8 @@ Este repositorio contiene la especificación de un sistema smart city descentral
 - **DEBE / NO DEBE / DEBERÍA / PUEDE** tienen el sentido de RFC 2119.
 - Cada requisito lleva un identificador estable (`DATA-3`, `EVT-7`, `RELAY-2`…). Cítalo en commits, tests y comentarios de PR.
 - Si dos documentos se contradicen, gana `03-modelo-de-eventos.md` para formatos y `10-decisiones.md` para el porqué.
-- Los números de kind (`1480`–`1483`, `21480`, `31480`–`31486`) son **provisionales**: no los escribas como literales dispersos; impórtalos de `packages/schemas`.
+- Los números de kind (`1480`–`1483`, `21480`, `31480`–`31486`) están asignados para la v1 (`10`, ADR-12), pero moverlos sigue siendo posible: no los escribas como literales dispersos; impórtalos de `packages/schemas`.
+- **MoSCoW** (`11-priorizacion.md`) indica prioridad de entrega y es independiente de DEBE/DEBERÍA/PUEDE. Construye primero lo Must; no implementes nada Won't sin un ADR que lo cambie.
 
 ## Invariantes que no se negocian
 
@@ -34,6 +35,7 @@ Este repositorio contiene la especificación de un sistema smart city descentral
 
 ## Al cambiar la spec
 
-- Mantén los IDs de requisito existentes; los nuevos toman el siguiente número libre.
+- La spec está cerrada como v1.0. Un cambio de requisito o de prioridad se registra como ADR nuevo en `10-decisiones.md`.
+- Mantén los IDs de requisito existentes; los nuevos toman el siguiente número libre y reciben prioridad en `11-priorizacion.md`.
 - Cambios incompatibles en un esquema suben el campo `v` del contenido y se registran en `10-decisiones.md`.
 - La spec se escribe en español; identificadores, nombres de campos y código en inglés.

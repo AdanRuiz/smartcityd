@@ -103,6 +103,7 @@ Unidad mínima de datos. Estructura NIP-01:
 | REPL-3 | Los relays PUEDEN espejarse entre sí suscribiéndose a los kinds del sistema, o con reconciliación de conjuntos (NIP-77 negentropy) si ambos la soportan. |
 | REPL-4 | La lista de relays de una ciudad vive en su evento de definición (kind 31480); cada autor PUEDE publicar la suya (kind 10002, NIP-65). |
 | REPL-5 | La app incluye una lista semilla de relays en el build, editable por el usuario. |
+| REPL-6 | Por defecto el SDK escribe solo en la lista semilla y en los `relays` de la definición `city`. NO DEBE añadir por su cuenta relays Nostr públicos de propósito general; el usuario o la app PUEDEN añadirlos de forma explícita. |
 
 ### Planos de almacenamiento
 

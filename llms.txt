@@ -22,4 +22,5 @@
 ## Opcional
 
 - [Roadmap](docs/spec/09-roadmap.md): fases y criterios de aceptación
-- [Decisiones](docs/spec/10-decisiones.md): ADRs y preguntas abiertas
+- [Decisiones](docs/spec/10-decisiones.md): ADRs y preguntas cerradas
+- [Priorización](docs/spec/11-priorizacion.md): prioridad MoSCoW de cada requisito y entregable de la v1

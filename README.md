@@ -2,7 +2,7 @@
 
 Especificación de una plataforma de ciudad inteligente sin servidor central: cualquier app o dispositivo puede publicar y leer datos urbanos, y tanto la app como los datos sobreviven aunque desaparezca quien los creó.
 
-Estado: **especificación v0.1 (borrador)**. Todavía no hay código.
+Estado: **especificación v1.0 (cerrada el 2026-10-12)**. Sin preguntas abiertas; requisitos priorizados con MoSCoW en [11-priorizacion](docs/spec/11-priorizacion.md). Todavía no hay código.
 
 ## Idea en cinco líneas
 
@@ -26,6 +26,7 @@ Estado: **especificación v0.1 (borrador)**. Todavía no hay código.
 | [07-relay-referencia](docs/spec/07-relay-referencia.md) | Relay de referencia sobre Cloudflare Workers + D1 |
 | [08-seguridad-y-privacidad](docs/spec/08-seguridad-y-privacidad.md) | Modelo de amenazas, datos personales, moderación |
 | [09-roadmap](docs/spec/09-roadmap.md) | Fases con criterios de aceptación |
-| [10-decisiones](docs/spec/10-decisiones.md) | Registro de decisiones (ADR) y preguntas abiertas |
+| [10-decisiones](docs/spec/10-decisiones.md) | Registro de decisiones (ADR) y preguntas cerradas |
+| [11-priorizacion](docs/spec/11-priorizacion.md) | Prioridad MoSCoW de cada requisito y entregable de la v1 |
 
 Para agentes de IA: empezar por [AGENTS.md](AGENTS.md).

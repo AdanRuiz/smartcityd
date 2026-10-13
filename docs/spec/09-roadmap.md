@@ -2,11 +2,12 @@
 
 Fases incrementales. Cada una termina con algo desplegado y verificable. No se estiman fechas.
 
+Las fases dicen **cuándo**; la prioridad de cada entregable (Must, Should, Could, Won't) está en `11`. Dentro de una fase se construye primero lo Must, y una fase se da por hecha cuando se cumplen sus criterios sobre lo Must; lo Should y lo Could que no entren pasan a la fase siguiente sin bloquearla.
+
 ## Fase 0 · Cimientos
 
 - Monorepo pnpm, TypeScript estricto, CI (lint, test, build).
-- `packages/schemas`: constantes de kinds, JSON Schemas de `03`, tipos generados, validadores.
-- Resolver Q-1 (colisión de kinds).
+- `packages/schemas`: constantes de kinds (`10`, ADR-12), JSON Schemas de `03`, tipos generados, validadores.
 
 **Hecho cuando:** los ejemplos de `03` pasan validación en tests y los contraejemplos fallan.
 
@@ -15,12 +16,13 @@ Fases incrementales. Cada una termina con algo desplegado y verificable. No se e
 - `services/relay-worker`: WebSocket NIP-01, D1, aceptación (pasos 1–7 de `07`), `POST`/`GET /v1/events`, NIP-11.
 - Script de carga que publica observaciones agrupadas.
 
-**Hecho cuando:** pasan las pruebas de aceptación 1–6 y 9 de `07`, y hay una medición real de CPU por evento y filas escritas por evento en la capa gratuita. Si la verificación de firma no cabe en el límite de CPU, se decide alternativa antes de seguir (ver `10`, Q-6).
+**Hecho cuando:** pasan las pruebas de aceptación 1–6 y 9 de `07`, y hay una medición real de CPU por evento y filas escritas por evento en la capa gratuita. Si la verificación de firma no cabe en el límite de CPU, se pasa a la siguiente alternativa del orden ya fijado (ver `10`, ADR-14) antes de seguir.
 
 ## Fase 2 · SDK y primer caso de uso de extremo a extremo
 
 - `packages/sdk`: cliente, firmantes, pool de relays, validación, publicación y consulta de `dataset`, `source`, `observation`.
 - `apps/web`: mapa (MapLibre + PMTiles), capa de un dataset, panel de relays.
+- Designación de los custodios de las llaves raíz de la ciudad piloto (TRUST-11): al menos tres, de organizaciones distintas, con una llave guardada fuera de línea.
 - Publicación manual de una ciudad piloto (`city`) y un dataset de calidad del aire.
 - Despliegue en un espejo.
 
@@ -59,8 +61,14 @@ Fases incrementales. Cada una termina con algo desplegado y verificable. No se e
 
 ## Después de v1 (sin compromiso)
 
+Es la lista Won't de `11`: fuera de la v1 por decisión, no por olvido.
+
 - Agregados columnares en snapshots (Q-4).
 - Sincronización navegador a navegador por WebRTC.
 - Reconciliación de conjuntos entre relays (NIP-77).
 - Datos privados entre partes con cifrado (NIP-44) para operadores.
 - Módulo de participación con orden global (Q-3).
+- Firma de umbral para las raíces (Q-2).
+- Un hub por ciudad en el relay de referencia (Q-5).
+- Geohash a precisión 7 (Q-9).
+- Propuesta de un NIP propio (Q-1).

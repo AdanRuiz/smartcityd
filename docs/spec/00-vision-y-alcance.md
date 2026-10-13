@@ -55,7 +55,7 @@ Cualquier persona puede asumir cualquier rol. "Autoridad" no es un privilegio t�
 4. **Estado de infraestructura.** Ocupación de estacionamientos, nivel de contenedores, estaciones de bici: "último valor gana".
 5. **Datos abiertos reproducibles.** Un investigador descarga por torrent el snapshot de un año y verifica firmas y sello de tiempo sin pedir permiso.
 
-Estos cinco casos fijan los requisitos de la v1; los esquemas correspondientes están en `03`.
+Estos cinco casos fijan los requisitos de la v1; los esquemas correspondientes están en `03`. No pesan igual: su prioridad de entrega (los casos 1, 2 y 5 primero) está en `11`.
 
 ## Requisitos no funcionales
 

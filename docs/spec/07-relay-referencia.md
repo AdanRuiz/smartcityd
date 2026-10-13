@@ -20,7 +20,7 @@ Implementación en `services/relay-worker`. Es **una** forma de operar un relay;
 
 - El **hub** mantiene los WebSockets usando la API de hibernación, de modo que las conexiones inactivas no consumen tiempo de cómputo.
 - **D1** es el almacén. Las rutas HTTP lo consultan directo, sin pasar por el hub.
-- v1 usa un solo hub. Si una instancia se queda corta, se particiona por ciudad (`/c/<city>` → un hub por ciudad). Ver `10`, Q-5.
+- v1 usa un solo hub. Partir por ciudad (`/c/<city>` → un hub por ciudad) queda fuera de la v1 salvo que la medición de la fase 1 muestre que un hub no sostiene la carga del piloto; es un cambio interno que no toca el protocolo. Ver `10`, Q-5.
 
 ## Esquema D1
 
@@ -161,7 +161,7 @@ Cifras orientativas; **verificar en la documentación de Cloudflare antes de dim
 
 Estimación: una observación típica cuesta del orden de 10–15 filas escritas contando índices, así que un relay gratuito admite del orden de **10⁴ eventos por día**. Con agrupación (DATA-9) eso son millones de lecturas diarias; sin ella, apenas unas decenas de sensores. De ahí que agrupar y repartir entre varios relays sea parte del diseño y no una optimización.
 
-Riesgos a validar con un prototipo (fase 1): costo de CPU de la verificación Schnorr en Workers, y costo real de filas por evento.
+Mediciones obligatorias para cerrar la fase 1: costo de CPU de la verificación Schnorr en Workers, y costo real de filas por evento. Qué se hace si la verificación no cabe ya está decidido (`10`, ADR-14).
 
 ## Pruebas de aceptación
 

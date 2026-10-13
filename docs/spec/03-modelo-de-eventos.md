@@ -4,7 +4,7 @@ Fuente de verdad de formatos. La estructura base del evento y sus clases están 
 
 ## Tabla de kinds
 
-> Números **provisionales**. Antes de la v1 hay que comprobar colisiones contra el registro de kinds de Nostr (ver `10`, Q-1). El código DEBE importarlos de `packages/schemas`.
+> Números **asignados para la v1**: comprobados sin colisión contra el registro de kinds de Nostr el 2026-10-12 (ver `10`, ADR-12). El código DEBE importarlos de `packages/schemas`, nunca escribirlos como literales.
 
 | Kind | Nombre | Clase | Quién lo publica | Propósito |
 |---|---|---|---|---|

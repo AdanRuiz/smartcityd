@@ -67,11 +67,14 @@ Todo evento verificado criptográficamente recibe un nivel calculado en el clien
 
 ## Rotación de raíces
 
-- Una ciudad DEBERÍA tener al menos 3 llaves raíz en manos de personas o instituciones distintas.
-- Añadir o quitar una raíz se hace publicando una nueva definición `city`. El cliente la acepta automáticamente solo si llega firmada, con el mismo contenido, por una **mayoría estricta de las raíces que ya conoce**. Si no, la muestra como propuesta pendiente de decisión del usuario.
-- Como cada raíz publica su propio evento direccionable (la pubkey forma parte de la dirección), "misma definición" significa mismo `content` byte a byte.
+| ID | Regla |
+|---|---|
+| TRUST-11 | Una ciudad DEBERÍA tener al menos 3 llaves raíz en manos de personas o instituciones distintas. |
+| TRUST-12 | Añadir o quitar una raíz se hace publicando una nueva definición `city`. El cliente la acepta automáticamente solo si llega firmada, con el mismo contenido, por una **mayoría estricta de las raíces que ya conoce**. Si no, la muestra como propuesta pendiente de decisión del usuario. |
 
-Esto es deliberadamente simple. Un esquema de umbral criptográfico (FROST, multisig) queda como pregunta abierta (`10`, Q-2).
+Como cada raíz publica su propio evento direccionable (la pubkey forma parte de la dirección), "misma definición" significa mismo `content` byte a byte.
+
+Esto es deliberadamente simple. Un esquema de umbral criptográfico (FROST, multisig) queda fuera de la v1 (`10`, ADR-13).
 
 ### Recuperación si se pierde la mayoría de las raíces
 
