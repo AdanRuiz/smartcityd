@@ -191,6 +191,19 @@ importers:
         specifier: ^16.0.0
         version: 16.0.0
 
+  packages/sdk:
+    dependencies:
+      '@smartcity/schemas':
+        specifier: workspace:*
+        version: link:../schemas
+      nostr-tools:
+        specifier: ^2.25.2
+        version: 2.25.2(typescript@6.0.3)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.20.5
+        version: 22.20.5
+
   services/relay-worker:
     dependencies:
       '@smartcity/schemas':
