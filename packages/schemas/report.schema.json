@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReportContent",
+  "description": "Kind 1481 · report",
+  "type": "object",
+  "required": ["v", "title", "loc"],
+  "properties": {
+    "v": { "const": 1 },
+    "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "body": { "type": "string", "maxLength": 2000 },
+    "loc": { "$ref": "#/$defs/latlon" },
+    "attachments": {
+      "type": "array", "maxItems": 4,
+      "items": { "$ref": "#/$defs/attachment" }
+    }
+  },
+  "$defs": {
+    "hex64": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "latlon": {
+      "type": "array", "minItems": 2, "maxItems": 2,
+      "prefixItems": [
+        { "type": "number", "minimum": -90, "maximum": 90 },
+        { "type": "number", "minimum": -180, "maximum": 180 }
+      ]
+    },
+    "attachment": {
+      "type": "object",
+      "required": ["x", "mime", "size", "urls"],
+      "properties": {
+        "x": { "$ref": "#/$defs/hex64" },
+        "mime": { "type": "string", "minLength": 1 },
+        "size": { "type": "integer", "minimum": 0 },
+        "urls": {
+          "type": "array", "minItems": 1,
+          "items": { "type": "string", "pattern": "^(https|ipfs)://" }
+        }
+      }
+    }
+  }
+}

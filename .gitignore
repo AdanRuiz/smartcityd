@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.wrangler/
+.dev.vars
+.env*
+
+# Generated from the JSON Schemas by `pnpm --filter @smartcity/schemas gen`
+packages/schemas/src/generated/

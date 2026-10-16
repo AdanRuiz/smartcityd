@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReleaseContent",
+  "description": "Kind 31486 · release",
+  "type": "object",
+  "required": ["v", "version", "commit", "single"],
+  "properties": {
+    "v": { "const": 1 },
+    "version": { "type": "string", "minLength": 1 },
+    "commit": { "type": "string", "minLength": 1 },
+    "single": {
+      "description": "smartcity.html (APP-4)",
+      "type": "object",
+      "required": ["x", "size", "urls"],
+      "properties": {
+        "x": { "$ref": "#/$defs/hex64" },
+        "size": { "type": "integer", "minimum": 0 },
+        "urls": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "dist": {
+      "type": "object",
+      "properties": {
+        "cid": { "type": "string" },
+        "magnet": { "type": "string", "pattern": "^magnet:\\?" }
+      }
+    },
+    "mirrors": { "type": "array", "items": { "type": "string" } },
+    "notes": { "type": "string" }
+  },
+  "$defs": {
+    "hex64": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

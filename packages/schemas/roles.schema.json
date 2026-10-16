@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RolesContent",
+  "description": "Kind 31484 · roles. The role list itself lives in the `p` tags.",
+  "type": "object",
+  "required": ["v"],
+  "properties": {
+    "v": { "const": 1 },
+    "about": { "type": "string" }
+  }
+}

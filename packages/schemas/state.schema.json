@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StateContent",
+  "description": "Kind 31485 · state and kind 21480 · live (same content)",
+  "type": "object",
+  "required": ["v", "ts", "values"],
+  "properties": {
+    "v": { "const": 1 },
+    "ts": { "type": "integer", "minimum": 0 },
+    "values": {
+      "type": "object", "minProperties": 1, "maxProperties": 64,
+      "additionalProperties": { "type": ["number", "string", "boolean"], "maxLength": 256 }
+    },
+    "loc": { "$ref": "#/$defs/latlon" }
+  },
+  "$defs": {
+    "latlon": {
+      "type": "array", "minItems": 2, "maxItems": 2,
+      "prefixItems": [
+        { "type": "number", "minimum": -90, "maximum": 90 },
+        { "type": "number", "minimum": -180, "maximum": 180 }
+      ]
+    }
+  }
+}

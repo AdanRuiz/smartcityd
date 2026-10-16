@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReportUpdateContent",
+  "description": "Kind 1483 · report_update",
+  "type": "object",
+  "required": ["v"],
+  "anyOf": [
+    { "required": ["status"] },
+    { "required": ["body"] }
+  ],
+  "properties": {
+    "v": { "const": 1 },
+    "status": { "enum": ["open", "ack", "in_progress", "resolved", "rejected", "duplicate"] },
+    "body": { "type": "string", "maxLength": 2000 },
+    "attachments": {
+      "type": "array", "maxItems": 4,
+      "items": { "$ref": "#/$defs/attachment" }
+    }
+  },
+  "$defs": {
+    "hex64": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "attachment": {
+      "type": "object",
+      "required": ["x", "mime", "size", "urls"],
+      "properties": {
+        "x": { "$ref": "#/$defs/hex64" },
+        "mime": { "type": "string", "minLength": 1 },
+        "size": { "type": "integer", "minimum": 0 },
+        "urls": {
+          "type": "array", "minItems": 1,
+          "items": { "type": "string", "pattern": "^(https|ipfs)://" }
+        }
+      }
+    }
+  }
+}

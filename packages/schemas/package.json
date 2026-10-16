@@ -1,0 +1,28 @@
+{
+  "name": "@smartcity/schemas",
+  "version": "0.1.0",
+  "description": "Kinds, tags, JSON Schemas y validadores del protocolo SmartCity (docs/spec/03)",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./*.schema.json": "./*.schema.json"
+  },
+  "files": [
+    "dist",
+    "*.schema.json"
+  ],
+  "scripts": {
+    "gen": "node scripts/generate.mjs",
+    "build": "node scripts/generate.mjs && tsc -p tsconfig.build.json",
+    "typecheck": "node scripts/generate.mjs && tsc --noEmit",
+    "test": "node scripts/generate.mjs && vitest run"
+  },
+  "devDependencies": {
+    "ajv": "^8.20.0",
+    "json-schema-to-typescript": "^16.0.0"
+  }
+}

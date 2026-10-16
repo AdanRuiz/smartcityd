@@ -2,7 +2,9 @@
 
 Especificación de una plataforma de ciudad inteligente sin servidor central: cualquier app o dispositivo puede publicar y leer datos urbanos, y tanto la app como los datos sobreviven aunque desaparezca quien los creó.
 
-Estado: **especificación v1.0 (cerrada el 2026-10-12)**. Sin preguntas abiertas; requisitos priorizados con MoSCoW en [11-priorizacion](docs/spec/11-priorizacion.md). Todavía no hay código.
+Estado: **especificación v1.0 (cerrada el 2026-10-12)**. Sin preguntas abiertas; requisitos priorizados con MoSCoW en [11-priorizacion](docs/spec/11-priorizacion.md). Implementación: fase 0 de [09-roadmap](docs/spec/09-roadmap.md) (monorepo y `packages/schemas`).
+
+Desarrollo: `pnpm install`, luego `pnpm build`, `pnpm test`, `pnpm lint` y `pnpm typecheck`.
 
 ## Idea en cinco líneas
 

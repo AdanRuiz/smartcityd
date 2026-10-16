@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AppContent",
+  "description": "Kind 31483 · app",
+  "type": "object",
+  "required": ["v", "name", "urls", "writes", "reads"],
+  "properties": {
+    "v": { "const": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "urls": { "type": "array", "items": { "type": "string" } },
+    "icon": { "type": "string" },
+    "repo": { "type": "string" },
+    "writes": { "$ref": "#/$defs/targets" },
+    "reads": { "$ref": "#/$defs/targets" },
+    "automated": { "type": "boolean" }
+  },
+  "$defs": {
+    "targets": {
+      "description": "Dataset addresses or kind numbers",
+      "type": "array",
+      "items": { "type": ["string", "integer"], "minLength": 1, "minimum": 0 }
+    }
+  }
+}

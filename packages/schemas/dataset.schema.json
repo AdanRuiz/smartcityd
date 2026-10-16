@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DatasetContent",
+  "description": "Kind 31481 · dataset",
+  "type": "object",
+  "required": ["v", "name", "license", "mode", "fields", "geometry"],
+  "properties": {
+    "v": { "const": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "license": { "description": "SPDX identifier", "type": "string", "minLength": 1 },
+    "mode": { "enum": ["observation", "state", "live"] },
+    "fields": {
+      "type": "object", "minProperties": 1, "maxProperties": 64,
+      "additionalProperties": { "$ref": "#/$defs/field" }
+    },
+    "geometry": { "enum": ["point", "none"] },
+    "cadence_s": { "type": "integer", "minimum": 1 },
+    "model": { "description": "Equivalent Smart Data Models / NGSI-LD model URL", "type": "string" }
+  },
+  "$defs": {
+    "field": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["number", "integer", "string", "boolean"] },
+        "unit": { "description": "UCUM when one exists", "type": "string" },
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "enum": {
+          "type": "array", "minItems": 1,
+          "items": { "type": ["number", "string", "boolean"] }
+        },
+        "description": { "type": "string" }
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SnapshotContent",
+  "description": "Kind 1482 · snapshot",
+  "type": "object",
+  "required": ["v", "from", "to", "count", "format", "x", "file", "policy"],
+  "properties": {
+    "v": { "const": 1 },
+    "from": { "type": "integer", "minimum": 0 },
+    "to": { "type": "integer", "minimum": 0 },
+    "count": { "type": "integer", "minimum": 0 },
+    "format": { "enum": ["ndjson+gzip", "tar"] },
+    "x": { "description": "Canonical hash: sha256 of the uncompressed NDJSON (or of the .tar)", "$ref": "#/$defs/hex64" },
+    "file": {
+      "type": "object",
+      "required": ["name", "x", "size"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "x": { "$ref": "#/$defs/hex64" },
+        "size": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "cid": { "type": "string" },
+    "magnet": { "type": "string", "pattern": "^magnet:\\?" },
+    "urls": { "type": "array", "items": { "type": "string" } },
+    "relays": { "type": "array", "items": { "type": "string", "pattern": "^wss?://" } },
+    "policy": { "description": "Exclusion policy applied (SNAP-3); \"none\" if none", "type": "string", "minLength": 1 },
+    "blobs": { "description": "Number of files in an attachments archive (SNAP-13)", "type": "integer", "minimum": 0 }
+  },
+  "$defs": {
+    "hex64": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

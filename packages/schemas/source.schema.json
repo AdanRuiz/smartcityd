@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SourceContent",
+  "description": "Kind 31482 · source",
+  "type": "object",
+  "required": ["v", "name", "status"],
+  "properties": {
+    "v": { "const": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "loc": { "$ref": "#/$defs/latlon" },
+    "elevation_m": { "type": "number" },
+    "hardware": { "type": "string" },
+    "status": { "enum": ["active", "retired"] },
+    "keys": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/hex64" }
+    }
+  },
+  "$defs": {
+    "hex64": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "latlon": {
+      "type": "array", "minItems": 2, "maxItems": 2,
+      "prefixItems": [
+        { "type": "number", "minimum": -90, "maximum": 90 },
+        { "type": "number", "minimum": -180, "maximum": 180 }
+      ]
+    }
+  }
+}
