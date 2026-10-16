@@ -1,6 +1,7 @@
 import { acceptEvent, isNew } from './accept.js'
 import { readConfig } from './config.js'
 import type { Env } from './env.js'
+import { exportDay } from './export.js'
 import { filterFromQuery } from './filter.js'
 import type { Broadcast, Counters } from './hub.js'
 import { relayInfo } from './nip11.js'
@@ -49,6 +50,12 @@ export default {
       const events = await new Store(env.DB).query(filter, seconds())
       const body = events.map((e) => JSON.stringify(e) + '\n').join('')
       return new Response(body, { headers: { ...CORS, 'Content-Type': 'application/x-ndjson' } })
+    }
+
+    if (url.pathname === '/v1/export' && request.method === 'GET') {
+      const result = await exportDay(new Store(env.DB), url.searchParams, seconds())
+      if ('error' in result) return json({ ok: false, reason: result.error }, 400)
+      return new Response(result.body, { headers: { ...CORS, 'Content-Type': 'application/x-ndjson' } })
     }
 
     if (url.pathname === '/v1/events' && request.method === 'POST') {
