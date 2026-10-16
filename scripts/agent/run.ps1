@@ -15,6 +15,8 @@
 param(
   [int]$MaxIssues = 3,
   [int]$TaskTimeoutMinutes = 45,
+  # Pinned so a Claude Code update cannot silently change the model behind the PRs.
+  [string]$Model = 'claude-opus-5-5',
   [switch]$SkipRoadmap,
   [switch]$DryRun
 )
@@ -40,6 +42,8 @@ $PromptFiles = @('scripts/agent/prompt-issue.md', 'scripts/agent/prompt-roadmap.
 $PromptVersion = [string](Exec { git -C $SourceRepo log -1 --format=%h -- @PromptFiles } -AllowFail)
 if (-not $PromptVersion) { $PromptVersion = 'sin-version' }
 if (Exec { git -C $SourceRepo status --porcelain -- @PromptFiles } -AllowFail) { $PromptVersion += '+local' }
+$ClaudeVersion = 'desconocida'
+try { $ClaudeVersion = ([string](Exec { claude.cmd --version } -AllowFail) -split ' ')[0] } catch { }
 
 $LabelTodo = 'agent'
 $LabelBlocked = 'agent:bloqueado'
@@ -49,12 +53,13 @@ $LabelPause = 'agent:pausa'
 $LabelLog = 'agent:bitacora'
 $Runs = New-Object System.Collections.ArrayList
 $RunError = $null
+$StopRun = $false
 $Slug = $null
 $LastStats = $null
 $LastPrUrl = ''
 # Paths the agent must never change; a PR touching them is not opened.
 $ProtectedPaths = '^(\.github/|scripts/agent/|LICENSE$|pnpm-lock\.yaml$|.*\.env|.*\.dev\.vars$)'
-$PrFooter = "Generado sin supervision por ``scripts/agent/run.ps1`` ($RunId, prompts ``$PromptVersion``). Revisar antes de mezclar.`n`n" +
+$PrFooter = "Generado sin supervision por ``scripts/agent/run.ps1`` ($RunId, prompts ``$PromptVersion``, modelo ``$Model``, claude ``$ClaudeVersion``). Revisar antes de mezclar.`n`n" +
   [char]::ConvertFromUtf32(0x1F916) + ' Generated with [Claude Code](https://claude.com/claude-code)'
 
 # Permissions for the headless session. Everything not allowed is denied, since
@@ -97,6 +102,11 @@ function Test-Checks {
   return $null
 }
 
+# Errors worth retrying on a later run: quota, rate limits, overload, network.
+$TransientStatus = 429, 500, 502, 503, 504, 529
+$TransientText = 'usage limit|rate limit|limit reached|overloaded|ECONNRESET|ETIMEDOUT|ENOTFOUND|network|socket hang up'
+
+# Returns @{ status = 'ok' | 'transient' | 'error'; text = <result or reason> }.
 function Invoke-Claude([string]$Prompt, [string]$Tag) {
   $promptFile = Join-Path $StateDir "prompt-$RunId.md"
   $settingsFile = Join-Path $StateDir 'claude-settings.json'
@@ -106,25 +116,43 @@ function Invoke-Claude([string]$Prompt, [string]$Tag) {
   [IO.File]::WriteAllText($settingsFile, ($ClaudeSettings | ConvertTo-Json -Depth 5), $Utf8)
 
   $exe = Get-Command claude.exe, claude.cmd -ErrorAction SilentlyContinue | Select-Object -First 1
-  $argLine = "-p --output-format json --permission-mode acceptEdits --no-session-persistence --settings `"$settingsFile`""
+  $argLine = "-p --model $Model --output-format json --permission-mode acceptEdits --no-session-persistence --settings `"$settingsFile`""
   $p = Start-Process -FilePath $exe.Source -ArgumentList $argLine -WorkingDirectory $Clone `
     -RedirectStandardInput $promptFile -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
     -NoNewWindow -PassThru
+  # A timeout is not retried: the same task would likely time out again.
   if (-not $p.WaitForExit($TaskTimeoutMinutes * 60000)) {
     Write-Host "Claude exceeded $TaskTimeoutMinutes min; killing it."
     Exec { taskkill /PID $p.Id /T /F 2>&1 } -AllowFail | Out-Host
-    return $null
+    return @{ status = 'error'; text = "la sesion excedio $TaskTimeoutMinutes min; conviene partir la tarea" }
   }
   $raw = [IO.File]::ReadAllText($outFile, $Utf8)
-  try { $json = $raw | ConvertFrom-Json } catch { Write-Host "Unreadable Claude output: $raw"; return $null }
+  $stderr = if (Test-Path $errFile) { [IO.File]::ReadAllText($errFile, $Utf8).Trim() } else { '' }
+  try { $json = $raw | ConvertFrom-Json } catch { $json = $null }
+  if ($null -eq $json) {
+    # No JSON at all: the CLI died before answering (crash, network, auth).
+    $why = (($stderr -split "`r?`n") | Where-Object { $_ } | Select-Object -First 1)
+    Write-Host "Unreadable Claude output. stdout: $raw stderr: $stderr"
+    return @{ status = 'transient'; text = "la CLI de Claude no respondio: $why" }
+  }
   $script:LastStats = @{
     turns = Get-Prop $json 'num_turns'
     minutes = [math]::Round([double](Get-Prop $json 'duration_ms') / 60000, 1)
     denials = @(Get-Prop $json 'permission_denials').Count
     usd = Get-Prop $json 'total_cost_usd'
+    model = ''
   }
-  if (Get-Prop $json 'is_error') { Write-Host "Claude reported an error: $(Get-Prop $json 'result')"; return $null }
-  return [string](Get-Prop $json 'result')
+  $usage = Get-Prop $json 'modelUsage'
+  if ($usage) { $script:LastStats.model = @($usage.PSObject.Properties | ForEach-Object { $_.Name }) -join ', ' }
+  $result = [string](Get-Prop $json 'result')
+  if (Get-Prop $json 'is_error') {
+    $status = Get-Prop $json 'api_error_status'
+    Write-Host "Claude reported an error (api_error_status=$status): $result"
+    $transient = ($status -and $TransientStatus -contains [int]$status) -or ("$result $stderr" -match $TransientText)
+    $reason = if ($status) { "error de la API ($status): $result" } else { $result }
+    return @{ status = $(if ($transient) { 'transient' } else { 'error' }); text = $reason }
+  }
+  return @{ status = 'ok'; text = $result }
 }
 
 function Test-Paused {
@@ -139,7 +167,7 @@ function Write-TempFile([string]$Text) {
   return $f
 }
 
-# Returns 'pr', 'draft' or 'blocked: <reason>'.
+# Returns 'pr', 'draft', 'blocked: <reason>' or 'retry: <reason>' (transient; try again on a later run).
 function Invoke-Task([string]$Branch, [string]$Prompt, [string]$Closes) {
   Write-Host "=== $Branch ==="
   $script:LastStats = $null
@@ -149,8 +177,10 @@ function Invoke-Task([string]$Branch, [string]$Prompt, [string]$Closes) {
   Exec { pnpm --dir $Clone install --frozen-lockfile 2>&1 } | Out-Host
   if ($DryRun) { Write-Host "[dry-run] would run Claude on $Branch"; return 'dry-run' }
 
-  $result = Invoke-Claude $Prompt ($Branch -replace '^agent/', '')
-  if ($null -eq $result) { return 'blocked: la sesion de Claude fallo o excedio el tiempo (ver logs locales)' }
+  $session = Invoke-Claude $Prompt ($Branch -replace '^agent/', '')
+  if ($session.status -eq 'transient') { return "retry: $($session.text)" }
+  if ($session.status -eq 'error') { return "blocked: $($session.text)" }
+  $result = $session.text
   $lines = $result.Trim() -split "`r?`n", 2
   $first = $lines[0].Trim()
   $rest = if ($lines.Count -gt 1) { $lines[1].Trim() } else { '' }
@@ -188,6 +218,7 @@ function Add-RunRow([string]$Task, [string]$Outcome) {
     'pr' { 'PR abierto' }
     'draft' { 'PR en borrador (verificaciones rojas)' }
     'blocked:*' { 'Bloqueado: ' + (($Outcome.Substring(8).Trim() -split "`r?`n")[0]) }
+    'retry:*' { 'Reintento: ' + (($Outcome.Substring(6).Trim() -split "`r?`n")[0]) }
     default { $Outcome }
   }
   $s = $LastStats
@@ -197,6 +228,7 @@ function Add-RunRow([string]$Task, [string]$Outcome) {
     minutes = if ($s) { $s.minutes } else { '-' }
     denials = if ($s) { $s.denials } else { '-' }
     usd = if ($s -and $null -ne $s.usd) { '{0:N2}' -f [double]$s.usd } else { '-' }
+    model = if ($s -and $s.model) { $s.model } else { '-' }
   })
 }
 
@@ -216,7 +248,9 @@ function Get-LogIssue {
 function Publish-RunLog {
   if ($DryRun -or -not $Slug -or ($Runs.Count -eq 0 -and -not $RunError)) { return }
   $cell = { param($v) ("$v" -replace '\r?\n', ' ' -replace '\|', '\|') }
-  $lines = @("### Corrida $RunId - prompts ``$PromptVersion``", '')
+  $used = @($Runs | ForEach-Object { $_.model } | Where-Object { $_ -and $_ -ne '-' } | Sort-Object -Unique) -join ', '
+  if (-not $used) { $used = $Model }
+  $lines = @("### Corrida $RunId - prompts ``$PromptVersion`` - modelo ``$used`` - claude ``$ClaudeVersion``", '')
   if ($Runs.Count -gt 0) {
     $lines += '| Tarea | Resultado | PR | Turnos | Min | Denegaciones | USD eq. API |'
     $lines += '|---|---|---|---|---|---|---|'
@@ -224,7 +258,7 @@ function Publish-RunLog {
       $lines += "| $(& $cell $r.task) | $(& $cell $r.outcome) | $($r.pr) | $($r.turns) | $($r.minutes) | $($r.denials) | $($r.usd) |"
     }
   }
-  if ($RunError) { $lines += '', "**La corrida fallo:**``$(& $cell $RunError)``" }
+  if ($RunError) { $lines += '', "**La corrida fallo:** ``$(& $cell $RunError)``" }
   $lines += '', "Log local: ``%LOCALAPPDATA%\smartcity-agent\logs\$RunId.log``"
   $issue = Get-LogIssue
   Exec { gh issue comment $issue --repo $Slug --body-file (Write-TempFile ($lines -join "`n")) 2>&1 } | Out-Host
@@ -284,7 +318,7 @@ try {
     ForEach-Object { $_ } | Sort-Object number)
   $done = 0
   foreach ($issue in $issues) {
-    if ($done -ge $MaxIssues -or (Test-Paused)) { break }
+    if ($StopRun -or $done -ge $MaxIssues -or (Test-Paused)) { break }
     $branch = "agent/issue-$($issue.number)"
     if (Test-RemoteBranch $branch) { Write-Host "Skipping #$($issue.number): $branch exists."; continue }
     $template = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'prompt-issue.md'), $Utf8)
@@ -296,6 +330,8 @@ try {
       Exec { gh issue comment $issue.number --repo $Slug --body-file (Write-TempFile "El agente no pudo resolver este issue.`n`n$($outcome.Substring(8).Trim())`n`n---`n$PrFooter") 2>&1 } | Out-Host
       Exec { gh issue edit $issue.number --repo $Slug --remove-label $LabelTodo --add-label $LabelBlocked 2>&1 } | Out-Host
     }
+    # Quota or network trouble: leave the issue untouched and stop; the next run retries it.
+    if ($outcome -like 'retry:*') { $StopRun = $true }
     $done++
   }
 
@@ -305,6 +341,7 @@ try {
   $openRoadmap = @((Get-GhJson { gh pr list --repo $Slug --state open --limit 100 --json headRefName }) |
     ForEach-Object { $_ } | Where-Object { $_.headRefName -like 'agent/roadmap-*' })
   if ($SkipRoadmap) { Write-Host 'Roadmap skipped by flag.' }
+  elseif ($StopRun) { Write-Host 'Roadmap skipped: a transient error stopped this run.' }
   elseif (Test-Paused) { }
   elseif ($last -eq $today) { Write-Host 'Roadmap already attempted today.' }
   elseif ($openRoadmap.Count -gt 0) { Write-Host "Roadmap PR still open: $($openRoadmap[0].headRefName)." }
@@ -314,6 +351,10 @@ try {
     $outcome = Invoke-Task "agent/roadmap-$RunId" $prompt ''
     Write-Host "Roadmap: $outcome"
     Add-RunRow 'roadmap' $outcome
+    # A transient failure does not use up today's roadmap attempt.
+    if ($outcome -like 'retry:*' -and -not $DryRun) {
+      if ($last) { Set-Content -Path $RoadmapStamp -Value $last -Encoding ascii } else { Remove-Item $RoadmapStamp -Force }
+    }
   }
 }
 catch {

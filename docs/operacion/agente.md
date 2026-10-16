@@ -10,6 +10,7 @@ No es un componente del sistema: si el agente se apaga, la ciudad no lo nota (in
 2. **Bugs:** toma hasta 3 issues abiertos con la etiqueta `agent`, del más antiguo al más nuevo, y salta los que ya tienen una rama `agent/issue-<n>`.
 3. **Roadmap:** si no hay un PR `agent/roadmap-*` abierto y hoy no lo ha intentado, implementa el siguiente entregable **Must** técnico de la primera fase sin terminar (`09`, `11`).
 4. Por cada tarea abre un PR contra `main`. Si `build`, `lint`, `typecheck` o `test` fallan, el PR se abre como borrador. Si el agente no puede resolver un issue, lo comenta, le quita `agent` y le pone `agent:bloqueado`.
+5. **Errores pasajeros** (cuota agotada, límite de tasa, API saturada, red caída o la CLI que no responde): la tarea queda como *Reintento* en la bitácora, el issue no se toca, la corrida se detiene y el intento diario del roadmap no se gasta. La siguiente corrida lo reintenta. Que una sesión exceda los 45 min no cuenta como pasajero, porque se repetiría: se marca bloqueada para que la tarea se parta.
 
 **Nada se mezcla ni se despliega sin una persona.** El mantenedor revisa y mezcla cada PR.
 
@@ -24,6 +25,8 @@ No es un componente del sistema: si el agente se apaga, la ciudad no lo nota (in
 | Un issue intenta manipularlo (inyección de prompt) | Solo se toman issues con la etiqueta `agent`, que en GitHub solo pueden poner colaboradores con permiso de triage. El prompt trata el texto del issue como datos. |
 | Cobra a la API en vez de usar la suscripción | `ANTHROPIC_API_KEY` y `ANTHROPIC_AUTH_TOKEN` se borran del entorno antes de lanzar `claude`. |
 | Se acaba la cuota de uso | Máximo 3 issues y 1 tarea del roadmap por arranque, una tarea del roadmap al día y 45 minutos por tarea. La bitácora registra turnos y minutos de cada sesión. |
+| Una actualización de Claude Code cambia el modelo sin avisar | El modelo está fijado (`run.ps1 -Model`, hoy `claude-opus-5-5`). El modelo realmente usado y la versión de la CLI quedan en cada PR y en cada comentario de la bitácora. |
+| El agente se degrada y sigue gastando cuota | Freno automático: ver "Métricas". |
 
 Todo lo que no está en la lista de permitidos (`$ClaudeSettings` en `run.ps1`) queda denegado, porque en modo `-p` no hay a quién preguntar.
 
@@ -48,14 +51,15 @@ Para probarla sin reiniciar: `Start-ScheduledTask -TaskName smartcity-agent`. Pa
 - **Desbloquear:** en un issue `agent:bloqueado`, responde lo que pidió el agente y vuelve a ponerle `agent`. Para reintentar un issue cuyo PR cerraste sin mezclar, borra también la rama `agent/issue-<n>`.
 - **Pausar desde GitHub** (también desde el celular): abre un issue, por ejemplo "Pausa del agente", con la etiqueta `agent:pausa`. Mientras siga abierto, el agente no empieza ninguna tarea; si está en medio de una, la termina y no toma la siguiente. Para reanudar, cierra el issue. La etiqueta se crea en la primera corrida; si aún no existe, créala a mano con ese nombre.
 - **Pausar en la laptop:** `Disable-ScheduledTask -TaskName smartcity-agent`; para reanudar, `Enable-ScheduledTask`.
-- **Bitácora en GitHub:** el issue fijado con la etiqueta `agent:bitacora` recibe un comentario por cada corrida que ejecutó una tarea o falló. El comentario incluye tarea, resultado, PR, turnos, minutos y denegaciones de permisos. Suscríbete a ese issue para recibir los avisos en el celular. Las corridas sin nada que hacer no comentan. Si cierras el issue, el agente abre uno nuevo.
+- **Bitácora en GitHub:** el issue fijado con la etiqueta `agent:bitacora` recibe un comentario por cada corrida que ejecutó una tarea o falló. El comentario incluye tarea, resultado, PR, turnos, minutos y denegaciones de permisos. Las corridas sin nada que hacer no comentan. **Ojo:** el agente comenta con la cuenta de `gh`, y GitHub no notifica a nadie de su propia actividad. Si es la cuenta del mantenedor, el comentario queda en el issue pero no le llega ningún aviso. Si cierras el issue, el agente abre uno nuevo.
 - **Métricas:** al final de cada corrida que ejecutó una tarea, `scripts/agent/metrics.ps1` reescribe la sección de métricas en el cuerpo del issue de bitácora. Editar el cuerpo no manda notificaciones. Los datos salen solo de GitHub, de los últimos 30 días:
   - De los PRs `agent/*`: tasa de merge, horas hasta el merge, borradores, CI rojo y tamaño.
-  - De los comentarios de la bitácora: tareas, bloqueos, turnos, minutos y denegaciones.
-  - Todo se agrupa también por **versión de los prompts**: el último commit que tocó `prompt-*.md`, que va en el pie de cada PR y en cada comentario. Después de cambiar un prompt, compara su tasa de merge y de bloqueos con la versión anterior.
+  - De los comentarios de la bitácora: tareas, bloqueos, reintentos, turnos, minutos y denegaciones.
+  - Todo se agrupa también por **versión de los prompts** (el último commit que tocó `prompt-*.md`) y por **modelo**; los dos van en el pie de cada PR y en cada comentario. Después de cambiar un prompt o el modelo, compara su tasa de merge y de bloqueos con la versión anterior.
+  - **Freno automático:** si se juntan 3 tareas seguidas bloqueadas, 3 PRs seguidos cerrados sin mezclar o 3 corridas seguidas fallidas, o si una sesión tiene 15 denegaciones o más, `metrics.ps1` abre un issue "Pausa automática del agente" con la etiqueta `agent:pausa` y el motivo. Desde ese momento el agente no hace nada. Revisa la causa y **cierra el issue para reanudar**: el freno solo cuenta lo que pase después del cierre. Los reintentos por errores pasajeros no cuentan. Los umbrales son parámetros de `metrics.ps1` (`-MaxBlockedInARow`, `-MaxRejectedInARow`, `-MaxFailedRunsInARow`, `-MaxDenialsPerSession`).
   - Para consultarlas a mano: `powershell -ExecutionPolicy Bypass -File scripts\agent\metrics.ps1 -Days 7`. Agrega `-Publish` para actualizar el issue.
 - **Logs locales:** `%LOCALAPPDATA%\smartcity-agent\logs` (se borran a los 30 días). `<fecha>.log` es la corrida y `<fecha>-<tarea>-claude.json`, la respuesta del modelo para cada tarea.
-- **Ajustes:** `run.ps1 -MaxIssues 1`, `-SkipRoadmap` y `-TaskTimeoutMinutes 20`. Para cambiarlos en la tarea programada, edita sus argumentos en `install.ps1`.
+- **Ajustes:** `run.ps1 -MaxIssues 1`, `-SkipRoadmap`, `-TaskTimeoutMinutes 20` y `-Model <id>`. Para cambiarlos en la tarea programada, edita sus argumentos en `install.ps1`.
 
 ## Límites conocidos
 
