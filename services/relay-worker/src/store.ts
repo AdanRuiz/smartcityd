@@ -1,4 +1,4 @@
-import { ANY_CITY, NOSTR_KIND, kindClass, parseAddress, tagValues, isHex64 } from '@smartcity/schemas'
+import { ANY_CITY, NOSTR_KIND, SECONDS_PER_DAY, kindClass, parseAddress, tagValues, isHex64 } from '@smartcity/schemas'
 import { addressD, eventCity, expiration, wins, type NostrEvent } from './event.js'
 import { INDEXED_TAGS, MAX_LIMIT, isEmptyFilter, type Filter } from './filter.js'
 
@@ -236,7 +236,71 @@ export class Store {
     const { results } = await this.db.prepare(sql).bind(...args).all<EventRow>()
     return (results ?? []).map(toEvent)
   }
+
+  /** Number of events `exportRange` would return for the whole range: what a snapshot of it must count. */
+  async countRange(city: string, range: { from: number; to: number }, now: number): Promise<number> {
+    const row = await this.db
+      .prepare(
+        'SELECT COUNT(*) AS n FROM events WHERE city IN (?, ?) AND created_at >= ? AND created_at < ? ' +
+          'AND NOT (kind IN (0, 3) OR (kind >= 10000 AND kind < 30000)) AND (expires_at IS NULL OR expires_at > ?)',
+      )
+      .bind(city, ANY_CITY, range.from, range.to, now)
+      .first<{ n: number }>()
+    return Number(row?.n ?? 0)
+  }
+
+  /** Deletes events whose NIP-40 expiration has passed. Returns rows written. */
+  async deleteExpired(now: number): Promise<number> {
+    const expired = 'SELECT id FROM events WHERE expires_at IS NOT NULL AND expires_at <= ?'
+    return rowsWritten(
+      await this.db.batch([
+        this.db.prepare(`DELETE FROM tags WHERE event_id IN (${expired})`).bind(now),
+        this.db.prepare(`DELETE FROM events WHERE id IN (${expired})`).bind(now),
+      ]),
+    )
+  }
+
+  /**
+   * UTC days (start, in seconds) of a city that still hold purgeable events (regular, not in `keep`) entirely
+   * before `before`. Events of `*` or without a city are never listed: no single city's snapshot accounts for them.
+   */
+  async purgeableDays(
+    before: number,
+    keep: readonly number[],
+    limit: number,
+  ): Promise<{ city: string; day: number }[]> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT DISTINCT city, (created_at / ${SECONDS_PER_DAY}) * ${SECONDS_PER_DAY} AS day FROM events ` +
+          `WHERE city IS NOT NULL AND city <> ? AND created_at < ? AND ${REGULAR_SQL} ` +
+          `AND kind NOT IN (${placeholders(keep.length)}) ORDER BY day ASC, city ASC LIMIT ?`,
+      )
+      .bind(ANY_CITY, before, ...keep, limit)
+      .all<{ city: string; day: number }>()
+    return (results ?? []).map((r) => ({ city: r.city, day: Number(r.day) }))
+  }
+
+  /** Deletes the purgeable events (as in `purgeableDays`) of one city in `[from, to)`. Returns rows written. */
+  async deleteRegularRange(
+    city: string,
+    range: { from: number; to: number },
+    keep: readonly number[],
+  ): Promise<number> {
+    const target =
+      `SELECT id FROM events WHERE city = ? AND created_at >= ? AND created_at < ? AND ${REGULAR_SQL} ` +
+      `AND kind NOT IN (${placeholders(keep.length)})`
+    const args = [city, range.from, range.to, ...keep]
+    return rowsWritten(
+      await this.db.batch([
+        this.db.prepare(`DELETE FROM tags WHERE event_id IN (${target})`).bind(...args),
+        this.db.prepare(`DELETE FROM events WHERE id IN (${target})`).bind(...args),
+      ]),
+    )
+  }
 }
+
+// Regular kinds (NIP-01 ranges, as in kindClass): neither replaceable, ephemeral nor addressable.
+const REGULAR_SQL = 'kind NOT IN (0, 3) AND kind < 10000'
 
 /** Runs several filters (one REQ) and merges them: deduplicated by id, newest first. */
 export async function queryAll(store: Store, filters: Filter[], now: number): Promise<NostrEvent[]> {
