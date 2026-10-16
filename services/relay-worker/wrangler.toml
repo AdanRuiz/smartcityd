@@ -18,8 +18,12 @@ database_name = "smartcity-relay"
 database_id = "882fe619-7ad8-46d5-bb2a-2b556c8c3cb9"
 migrations_dir = "migrations"
 
-# docs/spec/07, "Configuración". Not implemented yet: RETENTION_DAYS (phase 4, the relay does not purge until then:
-# RELAY-4), MIRROR_FROM (phase 5). TRUST_ANCHORS: comma-separated hex pubkeys whose `roles` lists the relay follows,
+# Daily retention (docs/spec/07, "Retención"): expired events, and days older than RETENTION_DAYS only once archived
+# (RELAY-4). Cron Triggers are not inherited by environments either, so env.b repeats it.
+[triggers]
+crons = ["17 3 * * *"]
+
+# docs/spec/07, "Configuración". Not implemented yet: MIRROR_FROM (phase 5). TRUST_ANCHORS: comma-separated hex pubkeys whose `roles` lists the relay follows,
 # for WRITE_POLICY=roles and to ask proof of work only of keys without a role; empty until the pilot has custodians.
 [vars]
 RELAY_NAME = "SmartCity relay"
@@ -36,6 +40,9 @@ MAX_EVENT_AGE_DAYS = "30"
 # Own Worker (smartcity-relay-b), hub and database, so neither depends on the other. Bindings and vars are not
 # inherited between environments, so they are repeated here.
 [env.b]
+
+[env.b.triggers]
+crons = ["17 3 * * *"]
 
 [[env.b.durable_objects.bindings]]
 name = "HUB"

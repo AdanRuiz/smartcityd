@@ -6,6 +6,8 @@ import { filterFromQuery } from './filter.js'
 import type { Broadcast, Counters } from './hub.js'
 import { relayInfo } from './nip11.js'
 import { RateLimiter } from './ratelimit.js'
+import { runRetention } from './retention.js'
+import { roleBookFor } from './roles.js'
 import { Store } from './store.js'
 
 export { Hub } from './hub.js'
@@ -82,5 +84,18 @@ export default {
     }
 
     return json({ ok: false, reason: 'not found' }, 404)
+  },
+
+  // Cron Trigger of wrangler.toml: retention (docs/spec/07, "Retención", RELAY-4).
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    const config = readConfig(env)
+    const deps = {
+      store: new Store(env.DB),
+      config,
+      roles: roleBookFor(config.trustAnchors),
+      fetch: (url: string, init: { method: 'HEAD' }) => fetch(url, init),
+      now: seconds(),
+    }
+    ctx.waitUntil(runRetention(deps).then((report) => console.log(JSON.stringify({ retention: report }))))
   },
 } satisfies ExportedHandler<Env>

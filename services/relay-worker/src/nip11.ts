@@ -26,7 +26,7 @@ export function relayInfo(config: Config) {
       created_at_lower_limit: config.maxEventAgeDays > 0 ? config.maxEventAgeDays * DAY : undefined,
       created_at_upper_limit: MAX_FUTURE_SECONDS,
     },
-    // The relay does not purge yet (RELAY-4 until phase 4); RETENTION_DAYS is the announced target.
+    // A minimum: days older than RETENTION_DAYS are purged only once archived (RELAY-4).
     retention: [{ time: config.retentionDays * DAY }],
     smartcity: {
       cities: config.cities ?? ['*'],
