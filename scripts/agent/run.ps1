@@ -76,7 +76,12 @@ $ClaudeSettings = @{
     )
     deny = @(
       'Bash(git push*)', 'Bash(git remote*)', 'Bash(git config*)', 'Bash(gh *)',
-      'Bash(*deploy*)', 'Bash(*wrangler*)', 'Bash(*--remote*)',
+      # Deploy rules cover only pnpm and node, the allowed commands that can launch
+      # wrangler (a bare `wrangler` is not allowed, so it is already denied). A
+      # `*wrangler*` rule matched the whole command line, so it also blocked
+      # `git add wrangler.toml` and commit messages (issue #4).
+      'Bash(pnpm *deploy*)', 'Bash(pnpm *wrangler*)', 'Bash(pnpm *--remote*)',
+      'Bash(node *deploy*)', 'Bash(node *wrangler*)', 'Bash(node *--remote*)',
       'Bash(pnpm add*)', 'Bash(pnpm remove*)', 'Bash(pnpm up*)', 'Bash(pnpm update*)',
       'Bash(pnpm dlx*)', 'Bash(pnpm publish*)', 'Bash(npx *)', 'Bash(curl *)', 'Bash(wget *)',
       'PowerShell', 'WebFetch', 'WebSearch'

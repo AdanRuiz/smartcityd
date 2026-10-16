@@ -21,7 +21,7 @@ Corre 3 minutos después de iniciar sesión y luego cada hora mientras la sesió
 | Riesgo | Contención |
 |---|---|
 | El modelo empuja código o abre PRs por su cuenta | Solo edita y hace commit. El clon tiene el push deshabilitado y `git push` y `gh` están denegados. El push y el PR los hace `run.ps1`, que se lee del checkout del mantenedor, no del clon. |
-| Despliega a Cloudflare | `*deploy*`, `*wrangler*` y `--remote` están denegados, y la sesión corre con un `CLOUDFLARE_API_TOKEN` inválido. |
+| Despliega a Cloudflare | `pnpm` y `node` con `deploy`, `wrangler` o `--remote` están denegados; `wrangler` y `npx` sueltos no están permitidos. La sesión corre con un `CLOUDFLARE_API_TOKEN` inválido. Las reglas se limitan a esos comandos para no bloquear `git add wrangler.toml` ni mensajes de commit que digan "deploy". |
 | Se debilita sus propias reglas o las del CI | Un PR que toca `.github/`, `scripts/agent/`, `LICENSE`, `pnpm-lock.yaml` o archivos `.env`/`.dev.vars` no se abre. |
 | Mete dependencias (cadena de suministro) | `pnpm add/up/dlx`, `npx`, `curl` y `wget` están denegados, y el lockfile está protegido. |
 | Un issue intenta manipularlo (inyección de prompt) | Solo se toman issues con la etiqueta `agent`, que en GitHub solo pueden poner colaboradores con permiso de triage. El prompt trata el texto del issue como datos. |
