@@ -1,0 +1,27 @@
+{
+  "name": "relay-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Relay de referencia SmartCity sobre Cloudflare Workers (docs/spec/07)",
+  "type": "module",
+  "scripts": {
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json",
+    "test": "vitest run",
+    "dev": "wrangler dev",
+    "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "acceptance": "node scripts/acceptance.mjs",
+    "load": "node scripts/load.mjs",
+    "bench:verify": "node scripts/bench-verify.mjs"
+  },
+  "dependencies": {
+    "@smartcity/schemas": "workspace:*",
+    "nostr-tools": "^2.25.2"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261015.1",
+    "@types/node": "^22.20.5",
+    "wrangler": "^4.151.0"
+  }
+}

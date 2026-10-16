@@ -1,0 +1,30 @@
+name = "smartcity-relay"
+main = "src/index.ts"
+compatibility_date = "2026-09-15"
+
+# Single hub in v1 (docs/spec/07, Q-5). SQLite-backed so it runs on the free plan.
+[[durable_objects.bindings]]
+name = "HUB"
+class_name = "Hub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Hub"]
+
+# Created with `wrangler d1 create smartcity-relay`. Another deployment creates its own and changes the id.
+[[d1_databases]]
+binding = "DB"
+database_name = "smartcity-relay"
+database_id = "882fe619-7ad8-46d5-bb2a-2b556c8c3cb9"
+migrations_dir = "migrations"
+
+# docs/spec/07, "Configuración". Not implemented yet: WRITE_POLICY=roles, TRUST_ANCHORS, POW_BITS_REPORT (phase 3),
+# RETENTION_DAYS (phase 4, the relay does not purge until then: RELAY-4), MIRROR_FROM (phase 5).
+[vars]
+RELAY_NAME = "SmartCity relay"
+RELAY_CONTACT = ""
+CITIES = "*"
+WRITE_POLICY = "open"
+RATE_EVENTS_PER_MIN = "60"
+RETENTION_DAYS = "90"
+MAX_EVENT_AGE_DAYS = "30"
