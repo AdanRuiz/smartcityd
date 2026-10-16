@@ -13,7 +13,7 @@ const sc = await createClient({
   city: 'mx-gdl',
   relays: ['wss://relay-a.example', 'wss://relay-b.example'],
   trustAnchors: ['<pubkey raíz>'],          // resuelve la definición `city` y añade sus relays
-  signer: localSigner(generateSecretKey()), // sin firmante: solo lectura
+  signer: localSigner(generateSecretKey()), // sin firmante: solo lectura; se cambia con sc.setSigner()
 })
 
 const { address } = await sc.datasets.define({ d: 'air-quality', name: 'Calidad del aire', license: 'CC0-1.0',
@@ -38,7 +38,7 @@ sc.relays.onChange((status) => console.table(status))
 | SDK-6 | `bbox` → celdas geohash a la precisión más fina (6, 5 o 4) que quepa en 48 celdas por filtro; el resultado se recorta exacto. |
 | SDK-7 | `sc.observations.buffer(target, { maxItems, maxSeconds })` junta lecturas y publica un solo evento. |
 | SDK-9 | El núcleo compila con `lib: ES2022` y sin tipos de DOM ni de Node. En Node 20, que no trae `WebSocket` global, pasar `WebSocket` del paquete `ws`. |
-| SDK-10 | `sc.relays.status()` y `sc.relays.onChange()`: estado, latencia del último `OK`/`EOSE` y último error de cada relay. |
+| SDK-10 | `sc.relays.status()` y `sc.relays.onChange()`: estado, latencia del último `OK`/`EOSE` y último error de cada relay. Las conexiones se abren al primer uso; `sc.relays.connect()` las abre todas ya. |
 | REPL-2 | Las consultas preguntan a todos los relays de lectura y unen; los direccionables se reducen al ganador por DATA-3. |
 | REPL-4, REPL-6 | Escribe solo en los relays que se le dan (lista semilla) y en los `relays` de la definición `city` de las anclas. No añade relays públicos por su cuenta. |
 | TRUST-1, TRUST-3 | Con `trustAnchors` toma la definición `city` firmada por ellas. Sin anclas no elige: `sc.city` queda en `null` y `sc.cityCandidates()` lista las existentes. |
@@ -59,5 +59,7 @@ const sc = await createClient({ city: 'mx-gdl', verifier: workerVerifier(new Ver
 pnpm --filter @smartcity/sdk test        # sobre un relay falso en memoria
 pnpm --filter @smartcity/sdk e2e wss://relay-a,wss://relay-b   # NFR-1 contra relays reales (requiere build)
 ```
+
+`sensor` (`node scripts/sensor.mjs <dirección del dataset> [relays] --every 10`) simula un sensor que publica una lectura cada N segundos e imprime la hora de cada envío, para medir NFR-1 contra la app abierta en otra máquina.
 
 `e2e` publica un dataset `sdk-e2e` y observaciones con una llave desechable y mide cuánto tarda cada una en llegar a otro cliente suscrito. Contra `smartcity-relay.adan0001.workers.dev` (un relay, 2026-10-16): 15/15 recibidas, p50 138 ms, p95 246 ms.

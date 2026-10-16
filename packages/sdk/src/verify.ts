@@ -22,7 +22,7 @@ export const inlineVerifier: Verifier = {
 export interface WorkerLike {
   postMessage(message: unknown): void
   terminate(): void
-  onmessage: ((ev: { data: unknown }) => void) | null
+  addEventListener(type: 'message', listener: (ev: { data: unknown }) => void): void
 }
 
 /**
@@ -33,11 +33,11 @@ export interface WorkerLike {
 export function workerVerifier(worker: WorkerLike): Verifier {
   const waiting = new Map<number, (ok: boolean) => void>()
   let next = 0
-  worker.onmessage = ({ data }) => {
+  worker.addEventListener('message', ({ data }) => {
     const { n, ok } = data as { n: number; ok: boolean }
     waiting.get(n)?.(ok === true)
     waiting.delete(n)
-  }
+  })
   return {
     verify: (event) =>
       new Promise((resolve) => {

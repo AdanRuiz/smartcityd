@@ -1,0 +1,98 @@
+:root {
+  --bg: #f7f8fa;
+  --fg: #1d2430;
+  --muted: #5b6573;
+  --panel: #ffffff;
+  --border: #d9dee5;
+  --accent: #1f6feb;
+  --ok: #1a7f37;
+  --bad: #c62828;
+  --warn-bg: #fff8e1;
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 15px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12161b;
+    --fg: #e6e9ee;
+    --muted: #9aa4b2;
+    --panel: #1b2027;
+    --border: #2d343e;
+    --accent: #58a6ff;
+    --ok: #3fb950;
+    --bad: #ff6b6b;
+    --warn-bg: #2b2516;
+  }
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); }
+h1 { font-size: 1.4rem; margin: 0 0 0.5rem; }
+h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.4rem 0.8rem; cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button.danger { color: var(--bad); }
+input, select, textarea {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.4rem 0.5rem; width: 100%;
+}
+.layout { display: flex; flex-direction: column; height: 100%; }
+main { flex: 1; min-height: 0; overflow: auto; }
+.bar {
+  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  padding: 0.5rem 1rem; background: var(--panel); border-bottom: 1px solid var(--border);
+}
+.brand { font-size: 1.05rem; }
+.city { color: var(--muted); }
+.bar nav { margin-left: auto; display: flex; gap: 0.25rem; }
+.bar nav a { color: var(--fg); text-decoration: none; padding: 0.3rem 0.6rem; border-radius: 6px; }
+.bar nav a.active { background: var(--bg); font-weight: 600; }
+.chip { font-size: 0.75rem; padding: 0 0.4rem; border-radius: 999px; border: 1px solid currentColor; }
+.chip.ok { color: var(--ok); }
+.chip.bad { color: var(--bad); }
+.map-page { position: relative; height: 100%; }
+.map { position: absolute; inset: 0; }
+.panel {
+  position: absolute; top: 0.75rem; left: 0.75rem; width: min(320px, calc(100% - 1.5rem));
+  max-height: calc(100% - 1.5rem); overflow: auto;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.75rem; display: flex; flex-direction: column; gap: 0.6rem;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.15);
+}
+.panel label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; color: var(--muted); }
+.legend .ramp {
+  height: 10px; border-radius: 3px;
+  background: linear-gradient(to right, #2a9d8f, #8ab17d, #e9c46a, #f4a261, #e76f51, #9b2226);
+}
+.ramp-labels { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--muted); }
+.card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.75rem;
+}
+.card.warn { background: var(--warn-bg); }
+.card table th { text-align: left; font-weight: 500; padding-right: 0.75rem; color: var(--muted); }
+.page { padding: 1rem; max-width: 960px; margin: 0 auto; }
+.page.narrow { max-width: 560px; }
+.muted { color: var(--muted); margin: 0; }
+.small { font-size: 0.8rem; }
+.mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.85em; }
+.break { overflow-wrap: anywhere; }
+.row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+.row input { flex: 1; min-width: 200px; width: auto; }
+.error { color: var(--bad); }
+.ok { color: var(--ok); }
+.relays { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+.relays th, .relays td { text-align: left; padding: 0.4rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+.relays td.mono { overflow-wrap: anywhere; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.open { background: var(--ok); }
+.dot.closed { background: var(--bad); }
+.dot.connecting { background: #e3b341; }
+.file { cursor: pointer; }
+.file input { display: none; }
+.link { color: var(--accent); text-decoration: underline; }

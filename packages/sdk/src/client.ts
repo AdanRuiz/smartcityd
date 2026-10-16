@@ -143,7 +143,7 @@ export class Client {
   city: City | null = null
   readonly trustAnchors: string[]
   private readonly pool: Pool
-  private readonly signer: Signer | undefined
+  private signer: Signer | undefined
   private readonly verifier: Verifier
   private readonly queryTimeoutMs: number
   /** Events already verified, by id. A forged copy of a known id is answered with the verified one. */
@@ -170,6 +170,13 @@ export class Client {
     onChange: (listener: (status: RelayStatus[]) => void): (() => void) => this.pool.onStatus(listener),
     add: (url: string, flags?: RelayFlags): void => this.pool.add(url, flags),
     remove: (url: string): void => this.pool.remove(url),
+    /** Opens every connection now (they otherwise open on first use), to show their state. Never rejects. */
+    connect: (): Promise<void> => this.pool.connect(),
+  }
+
+  /** Changes who signs (or makes the client read-only with `undefined`). */
+  setSigner(signer: Signer | undefined): void {
+    this.signer = signer
   }
 
   async pubkey(): Promise<string | null> {

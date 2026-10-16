@@ -166,6 +166,11 @@ export class Pool {
     return () => subs.forEach((s) => s.close())
   }
 
+  /** Opens every connection; resolves when each has opened or failed. */
+  async connect(): Promise<void> {
+    await Promise.allSettled([...this.relays.values()].map((r) => r.connect()))
+  }
+
   close(): void {
     for (const relay of this.relays.values()) relay.close()
   }
