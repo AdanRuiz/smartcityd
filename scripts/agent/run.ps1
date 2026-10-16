@@ -68,7 +68,8 @@ $ClaudeSettings = @{
 function Exec([scriptblock]$Block, [switch]$AllowFail) {
   # Native stderr must not become a terminating error under 5.1.
   $ErrorActionPreference = 'Continue'
-  & $Block
+  # Merged stderr arrives as ErrorRecords; print them as plain lines.
+  & $Block | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ } }
   if (-not $AllowFail -and $LASTEXITCODE -ne 0) { throw "Command failed with exit code ${LASTEXITCODE}: $Block" }
 }
 
