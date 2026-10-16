@@ -1,4 +1,4 @@
-import { NOSTR_KIND, kindClass, parseAddress, tagValues, isHex64 } from '@smartcity/schemas'
+import { ANY_CITY, NOSTR_KIND, kindClass, parseAddress, tagValues, isHex64 } from '@smartcity/schemas'
 import { addressD, eventCity, expiration, wins, type NostrEvent } from './event.js'
 import { INDEXED_TAGS, MAX_LIMIT, isEmptyFilter, type Filter } from './filter.js'
 
@@ -53,6 +53,12 @@ function placeholders(n: number): string {
 
 function rowsWritten(results: DbResult[]): number {
   return results.reduce((sum, r) => sum + (r.meta?.rows_written ?? 0), 0)
+}
+
+/** Last line of an export page: the next page starts strictly after it. */
+export interface ExportPosition {
+  created_at: number
+  id: string
 }
 
 export class Store {
@@ -197,6 +203,36 @@ export class Store {
     }
     args.push(limit)
     const sql = `SELECT ${COLUMNS} FROM events WHERE ${where.join(' AND ')} ORDER BY created_at DESC, id ASC LIMIT ?`
+    const { results } = await this.db.prepare(sql).bind(...args).all<EventRow>()
+    return (results ?? []).map(toEvent)
+  }
+
+  /**
+   * Events of a city (`c` equal to it or to `*`) with `created_at` in `[from, to)`, regular and addressable
+   * only, in canonical order (docs/spec/06), strictly after `after`. `now` in seconds.
+   */
+  async exportRange(
+    city: string,
+    range: { from: number; to: number },
+    after: ExportPosition | null,
+    limit: number,
+    now: number,
+  ): Promise<NostrEvent[]> {
+    const where = [
+      'city IN (?, ?)',
+      'created_at >= ?',
+      'created_at < ?',
+      // Replaceable and ephemeral kinds are not archived (NIP-01 ranges, as in kindClass).
+      'NOT (kind IN (0, 3) OR (kind >= 10000 AND kind < 30000))',
+      '(expires_at IS NULL OR expires_at > ?)',
+    ]
+    const args: unknown[] = [city, ANY_CITY, range.from, range.to, now]
+    if (after) {
+      where.push('(created_at > ? OR (created_at = ? AND id > ?))')
+      args.push(after.created_at, after.created_at, after.id)
+    }
+    args.push(limit)
+    const sql = `SELECT ${COLUMNS} FROM events WHERE ${where.join(' AND ')} ORDER BY created_at ASC, id ASC LIMIT ?`
     const { results } = await this.db.prepare(sql).bind(...args).all<EventRow>()
     return (results ?? []).map(toEvent)
   }

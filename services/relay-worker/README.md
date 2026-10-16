@@ -2,9 +2,9 @@
 
 Relay de referencia sobre Cloudflare Workers + Durable Objects + D1. Especificación: [`docs/spec/07-relay-referencia.md`](../../docs/spec/07-relay-referencia.md).
 
-Estado (fase 3): WebSocket NIP-01 con hibernación, aceptación de eventos (pasos 1 a 9 de `07`), prueba de trabajo para `report` de llaves sin rol, `WRITE_POLICY=roles`, reemplazo de direccionables (DATA-3), borrado kind 5 (DATA-8), efímeros sin almacenar, expiración NIP-40, `POST`/`GET /v1/events`, NIP-11 y `/health`.
+Estado (fase 3): WebSocket NIP-01 con hibernación, aceptación de eventos (pasos 1 a 9 de `07`), prueba de trabajo para `report` de llaves sin rol, `WRITE_POLICY=roles`, reemplazo de direccionables (DATA-3), borrado kind 5 (DATA-8), efímeros sin almacenar, expiración NIP-40, `POST`/`GET /v1/events`, NIP-11 y `/health`. Fase 4: `GET /v1/export?c=<city>&day=<YYYY-MM-DD>`, el NDJSON canónico del día (`06`).
 
-Pendiente según `09-roadmap.md`: `GET /v1/export`, retención e importación de snapshots (fase 4; hasta entonces el relay **no purga**, RELAY-4); `MIRROR_FROM` (fase 5); adjuntos en R2 (opcional).
+Pendiente según `09-roadmap.md`: `GET /v1/export?received_after=` (responde `unsupported:`), retención e importación de snapshots (fase 4; hasta entonces el relay **no purga**, RELAY-4); `MIRROR_FROM` (fase 5); adjuntos en R2 (opcional).
 
 ## Desarrollo
 
@@ -79,4 +79,5 @@ Para medir la CPU por petición: `wrangler tail smartcity-relay --format json` m
 - **Filtros:** se aceptan `#a #e #g #p #t #x` (tabla `tags`) y `#c #d` (columnas). Un filtro sobre otra letra se rechaza con `unsupported:` en lugar de devolver resultados incompletos. Un filtro admite como máximo 80 valores, porque D1 enlaza como máximo 100 parámetros por consulta.
 - **Suscripciones:** se registran antes de la consulta inicial, para no perder lo que llegue mientras tanto; el cliente deduplica (DATA-6).
 - **`POST /v1/events`:** responde `{ok:true,id}` y añade `message` cuando el evento ya existía (`duplicate:`).
+- **`GET /v1/export` por día:** eventos regulares y direccionables vigentes con `c` igual a la ciudad o a `*` y `created_at` dentro del día UTC, serializados con `canonicalNdjson`/`canonicalLine` de `@smartcity/schemas`, las mismas funciones que usará el archivista, para que el sha256 coincida (prueba 7). Páginas de 1000 eventos: si el día no cabe, la última línea es `{"cursor":"…"}` y la siguiente página se pide con `&cursor=…`; las páginas sin esa línea, concatenadas, son el NDJSON canónico. Un día que cabe en una página no lleva línea de cursor.
 - **Pruebas:** `@cloudflare/vitest-pool-workers` exige vitest 4 y el monorepo usa vitest 5. Por eso la lógica se prueba en Node con `node:sqlite` en lugar de D1, y el comportamiento real (hub, WebSocket, D1 local) con `scripts/acceptance.mjs`.
