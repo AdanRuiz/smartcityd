@@ -1,6 +1,6 @@
 # Bitácora del agente
 
-Issue fijado que mantiene `scripts/agent/run.ps1`: cada corrida que hace algo o falla deja aquí un comentario. Las corridas sin nada que hacer no comentan. Para recibir los avisos, suscríbete a este issue.
+Issue fijado que mantiene `scripts/agent/run.ps1`: cada corrida que hace algo o falla deja aquí un comentario. Las corridas sin nada que hacer no comentan. Los comentarios los publica la cuenta de `gh`, así que esa cuenta no recibe avisos de ellos.
 
 | Columna | Significado |
 |---|---|
