@@ -49,6 +49,11 @@ Para probarla sin reiniciar: `Start-ScheduledTask -TaskName smartcity-agent`. Pa
 - **Pausar desde GitHub** (también desde el celular): abre un issue, por ejemplo "Pausa del agente", con la etiqueta `agent:pausa`. Mientras siga abierto, el agente no empieza ninguna tarea; si está en medio de una, la termina y no toma la siguiente. Para reanudar, cierra el issue. La etiqueta se crea en la primera corrida; si aún no existe, créala a mano con ese nombre.
 - **Pausar en la laptop:** `Disable-ScheduledTask -TaskName smartcity-agent`; para reanudar, `Enable-ScheduledTask`.
 - **Bitácora en GitHub:** el issue fijado con la etiqueta `agent:bitacora` recibe un comentario por cada corrida que ejecutó una tarea o falló. El comentario incluye tarea, resultado, PR, turnos, minutos y denegaciones de permisos. Suscríbete a ese issue para recibir los avisos en el celular. Las corridas sin nada que hacer no comentan. Si cierras el issue, el agente abre uno nuevo.
+- **Métricas:** al final de cada corrida que ejecutó una tarea, `scripts/agent/metrics.ps1` reescribe la sección de métricas en el cuerpo del issue de bitácora. Editar el cuerpo no manda notificaciones. Los datos salen solo de GitHub, de los últimos 30 días:
+  - De los PRs `agent/*`: tasa de merge, horas hasta el merge, borradores, CI rojo y tamaño.
+  - De los comentarios de la bitácora: tareas, bloqueos, turnos, minutos y denegaciones.
+  - Todo se agrupa también por **versión de los prompts**: el último commit que tocó `prompt-*.md`, que va en el pie de cada PR y en cada comentario. Después de cambiar un prompt, compara su tasa de merge y de bloqueos con la versión anterior.
+  - Para consultarlas a mano: `powershell -ExecutionPolicy Bypass -File scripts\agent\metrics.ps1 -Days 7`. Agrega `-Publish` para actualizar el issue.
 - **Logs locales:** `%LOCALAPPDATA%\smartcity-agent\logs` (se borran a los 30 días). `<fecha>.log` es la corrida y `<fecha>-<tarea>-claude.json`, la respuesta del modelo para cada tarea.
 - **Ajustes:** `run.ps1 -MaxIssues 1`, `-SkipRoadmap` y `-TaskTimeoutMinutes 20`. Para cambiarlos en la tarea programada, edita sus argumentos en `install.ps1`.
 

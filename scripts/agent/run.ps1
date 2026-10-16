@@ -33,6 +33,13 @@ $BinDir = Join-Path $StateDir 'bin'
 $LogDir = Join-Path $StateDir 'logs'
 $RoadmapStamp = Join-Path $StateDir 'roadmap-last.txt'
 $RunId = Get-Date -Format 'yyyyMMdd-HHmmss'
+. (Join-Path $PSScriptRoot 'common.ps1')
+
+# Last commit that touched the prompts, so metrics.ps1 can compare prompt versions.
+$PromptFiles = @('scripts/agent/prompt-issue.md', 'scripts/agent/prompt-roadmap.md')
+$PromptVersion = [string](Exec { git -C $SourceRepo log -1 --format=%h -- @PromptFiles } -AllowFail)
+if (-not $PromptVersion) { $PromptVersion = 'sin-version' }
+if (Exec { git -C $SourceRepo status --porcelain -- @PromptFiles } -AllowFail) { $PromptVersion += '+local' }
 
 $LabelTodo = 'agent'
 $LabelBlocked = 'agent:bloqueado'
@@ -47,7 +54,7 @@ $LastStats = $null
 $LastPrUrl = ''
 # Paths the agent must never change; a PR touching them is not opened.
 $ProtectedPaths = '^(\.github/|scripts/agent/|LICENSE$|pnpm-lock\.yaml$|.*\.env|.*\.dev\.vars$)'
-$PrFooter = "Generado sin supervision por ``scripts/agent/run.ps1`` ($RunId). Revisar antes de mezclar.`n`n" +
+$PrFooter = "Generado sin supervision por ``scripts/agent/run.ps1`` ($RunId, prompts ``$PromptVersion``). Revisar antes de mezclar.`n`n" +
   [char]::ConvertFromUtf32(0x1F916) + ' Generated with [Claude Code](https://claude.com/claude-code)'
 
 # Permissions for the headless session. Everything not allowed is denied, since
@@ -72,14 +79,6 @@ $ClaudeSettings = @{
   }
 }
 
-function Exec([scriptblock]$Block, [switch]$AllowFail) {
-  # Native stderr must not become a terminating error under 5.1.
-  $ErrorActionPreference = 'Continue'
-  # Merged stderr arrives as ErrorRecords; print them as plain lines.
-  & $Block | ForEach-Object { if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ } }
-  if (-not $AllowFail -and $LASTEXITCODE -ne 0) { throw "Command failed with exit code ${LASTEXITCODE}: $Block" }
-}
-
 function Reset-Clone {
   Exec { git -C $Clone fetch --prune origin 2>&1 } | Out-Host
   Exec { git -C $Clone checkout --force --detach origin/main 2>&1 } | Out-Host
@@ -96,11 +95,6 @@ function Test-Checks {
     if ($LASTEXITCODE -ne 0) { return "pnpm $step" }
   }
   return $null
-}
-
-function Get-Prop($Obj, [string]$Name) {
-  $p = $Obj.PSObject.Properties[$Name]
-  if ($p) { return $p.Value } else { return $null }
 }
 
 function Invoke-Claude([string]$Prompt, [string]$Tag) {
@@ -131,12 +125,6 @@ function Invoke-Claude([string]$Prompt, [string]$Tag) {
   }
   if (Get-Prop $json 'is_error') { Write-Host "Claude reported an error: $(Get-Prop $json 'result')"; return $null }
   return [string](Get-Prop $json 'result')
-}
-
-# gh prints JSON over several lines; 5.1's ConvertFrom-Json also emits arrays as one object.
-function Get-GhJson([scriptblock]$Block) {
-  $text = (Exec $Block) -join "`n"
-  return , @($text | ConvertFrom-Json)
 }
 
 function Test-Paused {
@@ -228,7 +216,7 @@ function Get-LogIssue {
 function Publish-RunLog {
   if ($DryRun -or -not $Slug -or ($Runs.Count -eq 0 -and -not $RunError)) { return }
   $cell = { param($v) ("$v" -replace '\r?\n', ' ' -replace '\|', '\|') }
-  $lines = @("### Corrida $RunId", '')
+  $lines = @("### Corrida $RunId - prompts ``$PromptVersion``", '')
   if ($Runs.Count -gt 0) {
     $lines += '| Tarea | Resultado | PR | Turnos | Min | Denegaciones | USD eq. API |'
     $lines += '|---|---|---|---|---|---|---|'
@@ -335,6 +323,9 @@ catch {
 }
 finally {
   try { Publish-RunLog } catch { Write-Host "Could not publish the run log: $_" }
+  if (-not $DryRun -and $Slug -and $Runs.Count -gt 0) {
+    try { & (Join-Path $PSScriptRoot 'metrics.ps1') -Repo $Slug -Publish | Out-Host } catch { Write-Host "Could not publish metrics: $_" }
+  }
   if (Test-Path (Join-Path $Clone '.git')) { try { Reset-Clone } catch { Write-Host "Could not reset the clone: $_" } }
   $mutex.ReleaseMutex()
   Stop-Transcript | Out-Null
