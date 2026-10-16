@@ -62,4 +62,4 @@ pnpm --filter @smartcity/sdk e2e wss://relay-a,wss://relay-b   # NFR-1 contra re
 
 `sensor` (`node scripts/sensor.mjs <dirección del dataset> [relays] --every 10`) simula un sensor que publica una lectura cada N segundos e imprime la hora de cada envío, para medir NFR-1 contra la app abierta en otra máquina.
 
-`e2e` publica un dataset `sdk-e2e` y observaciones con una llave desechable y mide cuánto tarda cada una en llegar a otro cliente suscrito. Contra `smartcity-relay.adan0001.workers.dev` (un relay, 2026-10-16): 15/15 recibidas, p50 138 ms, p95 246 ms.
+`e2e` publica un dataset `sdk-e2e` y observaciones con una llave desechable y mide cuánto tarda cada una en llegar a otro cliente suscrito. Contra `smartcity-relay.adan0001.workers.dev` (un relay, 2026-10-16): 15/15 recibidas, p50 138 ms, p95 246 ms. Contra los dos relays de referencia (`smartcity-relay` y `smartcity-relay-b`, 2026-10-16): 20/20 recibidas, p50 84 ms, p95 225 ms, y cada relay guardó las 20.

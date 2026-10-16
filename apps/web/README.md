@@ -2,7 +2,7 @@
 
 App web SmartCity: mapa de una capa de datos en vivo, panel de relays e identidad. SPA React estática sin backend propio; habla solo con relays mediante [`@smartcity/sdk`](../../packages/sdk). Especificación: [`docs/spec/06`](../../docs/spec/06-distribucion-y-persistencia.md) (distribución) y [`08`](../../docs/spec/08-seguridad-y-privacidad.md) (seguridad).
 
-Estado (fase 2): mapa con MapLibre y PMTiles, capa de un dataset de observaciones con suscripción en vivo por el área visible, panel de relays con estado y lista semilla editable, firmante NIP-07 o llave local cifrada con exportación. Abre desde `file://`, desde cualquier subruta y desde un servidor estático.
+Estado (fase 2): mapa con MapLibre y PMTiles, capa de un dataset de observaciones con suscripción en vivo por el área visible, panel de relays con estado y lista semilla editable, firmante NIP-07 o llave local cifrada con exportación. Abre desde `file://`, desde cualquier subruta y desde un servidor estático. Espejo en Cloudflare Pages: <https://smartcity-web.pages.dev/> (`npx wrangler pages deploy apps/web/dist --project-name smartcity-web --branch main`); es una copia más, no una dependencia.
 
 Pendiente según `09-roadmap.md`: almacén local, cola de salida, Service Worker, reportes y filtros por confianza (fase 3); `smartcity.html` en un solo archivo, `release` y "Acerca de" (fase 4).
 
@@ -29,7 +29,7 @@ Para ver datos en el mapa sin sensor real: `node packages/sdk/scripts/sensor.mjs
 | APP-5, REPL-5, TRUST-1 | `src/config.ts`: relays semilla y ciudades con sus llaves raíz. El usuario edita los relays en el panel; se guardan en `localStorage` del origen (APP-11). |
 | APP-7 | No hay Service Worker todavía; la app no depende de él. |
 | APP-9 | No descarga ni ejecuta código. |
-| NFR-1 | Suscripción en vivo por el área visible. Medido: sensor simulado publicando en el relay de referencia y la app abierta por `file://` en otro proceso; la lectura aparece en el mismo segundo en que se publica. |
+| NFR-1 | Suscripción en vivo por el área visible. Medido: sensor simulado publicando en el relay de referencia y la app abierta por `file://` en otro proceso; la lectura aparece en el mismo segundo en que se publica. Con los dos relays de referencia, el SDK mide p95 de 225 ms entre publicar y recibir. |
 | SEC-1 | El texto de eventos se pinta siempre como texto de React; no hay `dangerouslySetInnerHTML` ni enlaces generados desde eventos. |
 | SEC-2 | CSP en `<meta>`, añadida en el build: `default-src 'self'`, `script-src 'self'` sin `unsafe-eval` ni `unsafe-inline`, `connect-src` abierto a `wss:` y `https:`, `worker-src blob:`. En desarrollo no se aplica porque Vite inyecta un preámbulo en línea. |
 | PRIV-7 | Sin analítica ni telemetría. `referrer` desactivado. |
