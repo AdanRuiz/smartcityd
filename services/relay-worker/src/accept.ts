@@ -15,6 +15,11 @@ export interface AcceptDeps {
   now: () => number
   /** Roles from the anchors. Default: the shared book for `config.trustAnchors`. */
   roles?: RoleBook
+  /**
+   * Where the event comes from. Default `client`. Events imported from a snapshot skip the age limit (RELAY-5)
+   * and the rate limit, which are for clients; every other step applies.
+   */
+  origin?: 'client' | 'snapshot'
 }
 
 export type AcceptResult =
@@ -43,7 +48,7 @@ function idOf(raw: unknown): string {
 }
 
 /**
- * Acceptance of an event from a client (docs/spec/07, steps 1–9), then storage.
+ * Acceptance of an event from a client or a snapshot (docs/spec/07, steps 1–9), then storage.
  */
 export async function acceptEvent(raw: unknown, ip: string, deps: AcceptDeps): Promise<AcceptResult> {
   const { config, store, limiter } = deps
@@ -59,14 +64,15 @@ export async function acceptEvent(raw: unknown, ip: string, deps: AcceptDeps): P
   // 3. Date (DATA-4; RELAY-5 for regular events from clients).
   const now = deps.now()
   if (event.created_at > now + MAX_FUTURE_SECONDS) return reject('invalid: created_at is too far in the future')
+  const fromClient = (deps.origin ?? 'client') === 'client'
   const regular = kindClass(event.kind) === 'regular'
-  if (regular && config.maxEventAgeDays > 0 && event.created_at < now - config.maxEventAgeDays * DAY) {
+  if (fromClient && regular && config.maxEventAgeDays > 0 && event.created_at < now - config.maxEventAgeDays * DAY) {
     return reject('invalid: too old')
   }
 
   // 4. Rate limit, before the signature so abuse does not cost CPU (RELAY-3).
   const max = config.rateEventsPerMin
-  if (!limiter.hit([{ key: `pk:${event.pubkey}`, max }, { key: `ip:${ip}`, max: max * IP_RATE_FACTOR }])) {
+  if (fromClient && !limiter.hit([{ key: `pk:${event.pubkey}`, max }, { key: `ip:${ip}`, max: max * IP_RATE_FACTOR }])) {
     return reject('rate-limited: slow down')
   }
 

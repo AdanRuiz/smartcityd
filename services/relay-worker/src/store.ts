@@ -51,6 +51,15 @@ function placeholders(n: number): string {
   return Array.from({ length: n }, () => '?').join(', ')
 }
 
+/** Tags of an event that go in the `tags` table, once each. */
+function indexedTags(event: NostrEvent): [string, string][] {
+  const pairs = new Map<string, [string, string]>()
+  for (const [name, value] of event.tags) {
+    if (name && INDEXED.has(name) && value !== undefined) pairs.set(`${name}\0${value}`, [name, value])
+  }
+  return [...pairs.values()]
+}
+
 function rowsWritten(results: DbResult[]): number {
   return results.reduce((sum, r) => sum + (r.meta?.rows_written ?? 0), 0)
 }
@@ -89,30 +98,8 @@ export class Store {
     if (event.kind === NOSTR_KIND.DELETION) statements.push(...this.deletionTargets(event))
 
     // RELAY-2: the event and its tags in a single batch.
-    statements.push(
-      this.db
-        .prepare(
-          'INSERT INTO events (id, pubkey, created_at, kind, d, city, tags, content, sig, expires_at, received_at) ' +
-            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        )
-        .bind(
-          event.id,
-          event.pubkey,
-          event.created_at,
-          event.kind,
-          d,
-          eventCity(event),
-          JSON.stringify(event.tags),
-          event.content,
-          event.sig,
-          expiration(event),
-          now,
-        ),
-    )
-    const seen = new Set<string>()
-    for (const [name, value] of event.tags) {
-      if (!name || !INDEXED.has(name) || value === undefined || seen.has(`${name}\0${value}`)) continue
-      seen.add(`${name}\0${value}`)
+    statements.push(this.insertEvent('INSERT', event, d, now))
+    for (const [name, value] of indexedTags(event)) {
       statements.push(
         this.db
           .prepare('INSERT INTO tags (name, value, created_at, kind, event_id) VALUES (?, ?, ?, ?, ?)')
@@ -128,6 +115,62 @@ export class Store {
       if (String(error).includes('UNIQUE')) return { status: 'duplicate', rowsWritten: 0 }
       throw error
     }
+  }
+
+  /**
+   * Statements that bring an event imported from a snapshot into a database, whatever it already holds: they
+   * read nothing first and are idempotent, so they can also be written to a SQL file for `wrangler d1 execute`.
+   * An addressable deletes the stored versions it beats (DATA-3) and is ignored if a winner is stored; tags go in
+   * only with their event; a kind 5 deletes as in `save`, so deletions go after the events they refer to.
+   * `receivedAt` in seconds.
+   */
+  importStatements(event: NostrEvent, receivedAt: number): DbStatement[] {
+    if (kindClass(event.kind) === 'ephemeral') return []
+    const statements: DbStatement[] = []
+    const d = addressD(event)
+    if (d !== null) {
+      const beaten =
+        'SELECT id FROM events WHERE kind = ? AND pubkey = ? AND d = ? AND (created_at < ? OR (created_at = ? AND id > ?))'
+      const args = [event.kind, event.pubkey, d, event.created_at, event.created_at, event.id]
+      statements.push(
+        this.db.prepare(`DELETE FROM tags WHERE event_id IN (${beaten})`).bind(...args),
+        this.db.prepare(`DELETE FROM events WHERE id IN (${beaten})`).bind(...args),
+      )
+    }
+    if (event.kind === NOSTR_KIND.DELETION) statements.push(...this.deletionTargets(event))
+    statements.push(this.insertEvent('INSERT OR IGNORE', event, d, receivedAt))
+    for (const [name, value] of indexedTags(event)) {
+      statements.push(
+        this.db
+          .prepare(
+            'INSERT OR IGNORE INTO tags (name, value, created_at, kind, event_id) ' +
+              'SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM events WHERE id = ?)',
+          )
+          .bind(name, value, event.created_at, event.kind, event.id, event.id),
+      )
+    }
+    return statements
+  }
+
+  private insertEvent(verb: 'INSERT' | 'INSERT OR IGNORE', event: NostrEvent, d: string | null, receivedAt: number) {
+    return this.db
+      .prepare(
+        `${verb} INTO events (id, pubkey, created_at, kind, d, city, tags, content, sig, expires_at, received_at) ` +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .bind(
+        event.id,
+        event.pubkey,
+        event.created_at,
+        event.kind,
+        d,
+        eventCity(event),
+        JSON.stringify(event.tags),
+        event.content,
+        event.sig,
+        expiration(event),
+        receivedAt,
+      )
   }
 
   private deleteById(id: string): DbStatement[] {
