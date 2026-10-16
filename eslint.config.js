@@ -14,6 +14,7 @@ export default tseslint.config(
           'process',
           'Buffer',
           'fetch',
+          'URL',
           'URLSearchParams',
           'WebSocket',
           'performance',
