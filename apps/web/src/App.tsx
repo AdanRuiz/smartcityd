@@ -1,12 +1,15 @@
 import { HashRouter, NavLink, Route, Routes } from 'react-router'
-import { ClientProvider, useApp, useRelayStatus } from './client'
+import { ClientProvider, useApp, useOutbox, useRelayStatus } from './client'
 import { IdentityPage } from './pages/IdentityPage'
 import { MapPage } from './pages/MapPage'
 import { RelaysPage } from './pages/RelaysPage'
+import { ReportsPage } from './pages/ReportsPage'
+import { TrustPage } from './pages/TrustPage'
 
 function Header() {
-  const { cityConfig, city, identity } = useApp()
+  const { cityConfig, city, identity, anchors } = useApp()
   const relays = useRelayStatus()
+  const outbox = useOutbox()
   const open = relays.filter((r) => r.state === 'open').length
   return (
     <header className="bar">
@@ -16,11 +19,20 @@ function Header() {
         <NavLink to="/" end>
           Mapa
         </NavLink>
+        <NavLink to="/reportes">Reportes</NavLink>
         <NavLink to="/relays">
           Relays <span className={`chip ${open === 0 ? 'bad' : 'ok'}`}>{`${open}/${relays.length}`}</span>
         </NavLink>
+        <NavLink to="/confianza">
+          Confianza {anchors.length === 0 && <span className="chip bad">sin anclas</span>}
+        </NavLink>
         <NavLink to="/identidad">{identity ? 'Identidad' : 'Solo lectura'}</NavLink>
       </nav>
+      {outbox.length > 0 && (
+        <span className="chip warn" title="Se enviarán cuando haya conexión con algún relay">
+          {outbox.length} por enviar
+        </span>
+      )}
     </header>
   )
 }
@@ -34,7 +46,9 @@ export function App() {
           <main>
             <Routes>
               <Route path="/" element={<MapPage />} />
+              <Route path="/reportes" element={<ReportsPage />} />
               <Route path="/relays" element={<RelaysPage />} />
+              <Route path="/confianza" element={<TrustPage />} />
               <Route path="/identidad" element={<IdentityPage />} />
             </Routes>
           </main>

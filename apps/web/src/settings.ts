@@ -6,11 +6,13 @@ import { CITIES, SEED_RELAYS } from './config'
 export interface Settings {
   city: string
   relays: string[]
+  /** TRUST-2: anchors chosen by the user for the city; null uses the roots of the build (TRUST-1). */
+  anchors: string[] | null
 }
 
 const KEY = 'sc.settings'
 
-export const defaults = (): Settings => ({ city: CITIES[0]!.id, relays: [...SEED_RELAYS] })
+export const defaults = (): Settings => ({ city: CITIES[0]!.id, relays: [...SEED_RELAYS], anchors: null })
 
 export function loadSettings(): Settings {
   try {

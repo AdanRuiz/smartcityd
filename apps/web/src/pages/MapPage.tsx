@@ -1,25 +1,14 @@
-import type { BBox, City, Dataset, Reading } from '@smartcity/sdk'
-import { Map as MapLibreMap, type GeoJSONSource } from 'maplibre-gl'
+import type { Dataset, Reading, TrustLevel } from '@smartcity/sdk'
+import type { GeoJSONSource, Map as MapLibreMap, MapLayerMouseEvent } from 'maplibre-gl'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '../client'
-import { mapStyle, registerLocalTiles } from '../maplib'
+import { BasemapPicker, DEFAULT_LEVELS, TrustBadge, TrustFilter } from '../components'
+import { intersect, useCityMap, useTiles } from '../useMap'
 
 const WINDOW_S = 24 * 3600
 const SOURCE = 'readings'
 // Sequential ramp, low → high.
 const RAMP = ['#2a9d8f', '#8ab17d', '#e9c46a', '#f4a261', '#e76f51', '#9b2226']
-
-const darkScheme = () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
-
-/** First `https:` URL of the city's tiles. Other schemes (ipfs:, magnet) need a gateway or a local copy. */
-function cityTiles(city: City | null): string | null {
-  return city?.content.tiles?.urls?.find((u) => u.startsWith('https://')) ?? null
-}
-
-function intersect(a: BBox, b: BBox): BBox | null {
-  const box: BBox = [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])]
-  return box[0] <= box[2] && box[1] <= box[3] ? box : null
-}
 
 function readingKey(r: Reading): string {
   return r.source ?? `${r.pubkey}:${r.loc?.join(',') ?? ''}`
@@ -35,8 +24,9 @@ function addDataLayers(map: MapLibreMap) {
     paint: {
       'circle-radius': ['interpolate', ['linear'], ['zoom'], 9, 5, 15, 11],
       'circle-color': ['coalesce', ['get', 'color'], '#888'],
-      'circle-stroke-width': 1.5,
-      'circle-stroke-color': '#ffffff',
+      // docs/spec/04: `verified` is shown with a mark.
+      'circle-stroke-width': ['case', ['get', 'verified'], 3, 1.5],
+      'circle-stroke-color': ['case', ['get', 'verified'], '#1d4ed8', '#ffffff'],
     },
   })
 }
@@ -48,61 +38,33 @@ function colorFor(value: unknown, min: number, max: number): string {
 }
 
 export function MapPage() {
-  const { sc, cityConfig, city } = useApp()
+  const { sc, cityConfig, city, trustVersion } = useApp()
   const container = useRef<HTMLDivElement>(null)
-  const mapRef = useRef<MapLibreMap | null>(null)
-  const [ready, setReady] = useState(false)
-  const [view, setView] = useState<BBox | null>(null)
+  const tiles = useTiles()
+  const { map, ready, view, cityBox } = useCityMap(container, tiles, addDataLayers)
   const [datasets, setDatasets] = useState<Dataset[] | null>(null)
   const [address, setAddress] = useState<string | undefined>(cityConfig.dataset)
   const [field, setField] = useState<string | undefined>()
   const [latest, setLatest] = useState<ReadonlyMap<string, Reading>>(new Map())
   const [selected, setSelected] = useState<string | null>(null)
-  const [localTiles, setLocalTiles] = useState<string | null>(null)
   const [lastEvent, setLastEvent] = useState<number | null>(null)
-  const cityBox = city?.content.bbox ?? cityConfig.bbox
-  const tiles = localTiles ?? cityTiles(city)
+  const [levels, setLevels] = useState<TrustLevel[]>(DEFAULT_LEVELS)
 
-  // Map, created once.
   useEffect(() => {
-    const [minLat, minLon, maxLat, maxLon] = cityBox
-    const map = new MapLibreMap({
-      container: container.current!,
-      style: mapStyle(tiles, darkScheme()),
-      bounds: [
-        [minLon, minLat],
-        [maxLon, maxLat],
-      ],
-      attributionControl: { compact: true },
-    })
-    mapRef.current = map
-    map.on('style.load', () => {
-      addDataLayers(map)
-      setReady(true)
-    })
-    const updateView = () => {
-      const b = map.getBounds()
-      setView([b.getSouth(), b.getWest(), b.getNorth(), b.getEast()])
-    }
-    map.on('load', updateView)
-    map.on('moveend', updateView)
-    map.on('click', SOURCE, (e) => setSelected((e.features?.[0]?.properties?.key as string | undefined) ?? null))
-    map.on('mouseenter', SOURCE, () => (map.getCanvas().style.cursor = 'pointer'))
-    map.on('mouseleave', SOURCE, () => (map.getCanvas().style.cursor = ''))
+    const m = map.current
+    if (!m) return
+    const click = (e: MapLayerMouseEvent) => setSelected((e.features?.[0]?.properties?.key as string | undefined) ?? null)
+    const enter = () => (m.getCanvas().style.cursor = 'pointer')
+    const leave = () => (m.getCanvas().style.cursor = '')
+    m.on('click', SOURCE, click)
+    m.on('mouseenter', SOURCE, enter)
+    m.on('mouseleave', SOURCE, leave)
     return () => {
-      map.remove()
-      mapRef.current = null
-      setReady(false)
+      m.off('click', SOURCE, click)
+      m.off('mouseenter', SOURCE, enter)
+      m.off('mouseleave', SOURCE, leave)
     }
-  }, [])
-
-  // Basemap when the tiles become known (city definition or a local file). The map starts with the current ones.
-  const styledWith = useRef(tiles)
-  useEffect(() => {
-    if (styledWith.current === tiles) return
-    styledWith.current = tiles
-    mapRef.current?.setStyle(mapStyle(tiles, darkScheme()))
-  }, [tiles])
+  }, [map])
 
   // Datasets of the city with points (catalogue).
   useEffect(() => {
@@ -160,27 +122,37 @@ export function MapPage() {
     setSelected(null)
   }, [address])
 
-  // Readings → GeoJSON.
-  const values = [...latest.values()].map((r) => (fieldName ? r.values[fieldName] : undefined)).filter((v) => typeof v === 'number')
+  // TRUST-5, TRUST-7: the level is computed now, with the lists known now.
+  const shown = useMemo(() => {
+    const out = new Map<string, { reading: Reading; level: TrustLevel }>()
+    for (const [k, r] of latest) {
+      const level = sc.trust.levelOf(r)
+      if (levels.includes(level)) out.set(k, { reading: r, level })
+    }
+    return out
+  }, [sc, latest, levels, trustVersion])
+
   // Range of what is on screen; the dataset limits (often very wide) only when there is no data.
+  const values = [...shown.values()].map(({ reading }) => (fieldName ? reading.values[fieldName] : undefined)).filter((v) => typeof v === 'number')
   const min = values.length ? Math.min(...values) : (fieldSpec?.min ?? 0)
   const max = values.length ? Math.max(...values) : (fieldSpec?.max ?? 1)
   useEffect(() => {
-    const source = mapRef.current?.getSource(SOURCE) as GeoJSONSource | undefined
+    const source = map.current?.getSource(SOURCE) as GeoJSONSource | undefined
     if (!ready || !source) return
     source.setData({
       type: 'FeatureCollection',
-      features: [...latest.entries()]
-        .filter(([, r]) => r.loc)
-        .map(([key, r]) => ({
+      features: [...shown.entries()]
+        .filter(([, { reading }]) => reading.loc)
+        .map(([key, { reading: r, level }]) => ({
           type: 'Feature',
           geometry: { type: 'Point', coordinates: [r.loc![1], r.loc![0]] },
-          properties: { key, color: colorFor(fieldName ? r.values[fieldName] : undefined, min, max) },
+          properties: { key, color: colorFor(fieldName ? r.values[fieldName] : undefined, min, max), verified: level === 'verified' },
         })),
     })
-  }, [ready, latest, fieldName, min, max])
+  }, [ready, shown, fieldName, min, max])
 
-  const picked = selected ? latest.get(selected) : undefined
+  const picked = selected ? shown.get(selected) : undefined
+  const hidden = latest.size - shown.size
 
   return (
     <div className="map-page">
@@ -211,6 +183,7 @@ export function MapPage() {
             </select>
           </label>
         )}
+        <TrustFilter value={levels} onChange={setLevels} />
         {fieldName && (
           <div className="legend">
             <div className="ramp" />
@@ -222,15 +195,19 @@ export function MapPage() {
           </div>
         )}
         <p className="muted">
-          {latest.size} {latest.size === 1 ? 'fuente' : 'fuentes'} en las últimas 24 h
+          {shown.size} {shown.size === 1 ? 'fuente' : 'fuentes'} en las últimas 24 h
+          {hidden > 0 ? ` (${hidden} ocultas por el filtro)` : ''}
           {lastEvent ? ` · último dato ${new Date(lastEvent).toLocaleTimeString()}` : ''}
         </p>
         {picked && (
           <div className="card">
-            <div className="muted">{new Date(picked.ts * 1000).toLocaleString()}</div>
+            <div className="row-between">
+              <span className="muted">{new Date(picked.reading.ts * 1000).toLocaleString()}</span>
+              <TrustBadge level={picked.level} />
+            </div>
             <table>
               <tbody>
-                {Object.entries(picked.values).map(([k, v]) => (
+                {Object.entries(picked.reading.values).map(([k, v]) => (
                   <tr key={k}>
                     <th>{k}</th>
                     <td>
@@ -240,24 +217,11 @@ export function MapPage() {
                 ))}
               </tbody>
             </table>
-            {picked.q !== 'ok' && <div className="muted">Calidad: {picked.q}</div>}
-            <div className="muted mono">Fuente: {picked.source ?? picked.pubkey}</div>
+            {picked.reading.q !== 'ok' && <div className="muted">Calidad: {picked.reading.q}</div>}
+            <div className="muted mono">Fuente: {picked.reading.source ?? picked.reading.pubkey}</div>
           </div>
         )}
-        {!tiles && (
-          <label className="file">
-            Sin mapa base.{' '}
-            <span className="link">Abrir archivo .pmtiles</span>
-            <input
-              type="file"
-              accept=".pmtiles"
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) setLocalTiles(registerLocalTiles(file))
-              }}
-            />
-          </label>
-        )}
+        {!tiles && <BasemapPicker />}
       </aside>
     </div>
   )

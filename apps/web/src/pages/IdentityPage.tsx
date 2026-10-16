@@ -6,7 +6,8 @@ import { createLocalKey, extensionSigner, forgetLocalKey, importLocalKey, stored
 
 /** ID-1, ID-2, ID-3, ID-6. Reading needs no key; a key is only for publishing. */
 export function IdentityPage() {
-  const { identity, setIdentity } = useApp()
+  const { sc, identity, setIdentity } = useApp()
+  const [storageKept, setStorageKept] = useState<boolean | null>(sc.storage.persisted)
   const [saved, setSaved] = useState(storedKey)
   const [pass, setPass] = useState('')
   const [pass2, setPass2] = useState('')
@@ -29,6 +30,8 @@ export function IdentityPage() {
     await setIdentity(signer, 'local')
     setSaved(persisted ? ncryptsec : null)
     setExported(false)
+    // ID-7, SDK-11: ask the browser not to clear this origin's data on its own.
+    setStorageKept(await sc.storage.persist())
     if (persisted) done('Llave creada y guardada cifrada en este navegador.')
     else {
       done('Llave creada, pero este navegador no permite guardarla: se descargó la copia cifrada.')
@@ -108,6 +111,11 @@ export function IdentityPage() {
               Copiar
             </button>
           </div>
+          {storageKept === false && !exported && (
+            <p className="error">
+              El navegador no garantizó guardar los datos de esta app: puede borrarlos sin avisar. Exporta la llave ahora.
+            </p>
+          )}
           {exported && <p className="muted small">Copia exportada (ncryptsec, NIP-49).</p>}
         </section>
       )}
