@@ -6,9 +6,12 @@ export interface PublishResult {
   id: string
   /** Relays that answered `OK true` (or `duplicate:`) by the time the promise resolved. */
   accepted: string[]
-  /** Relays that rejected it for good, with the relay's message (`invalid: …`, `blocked: …`). */
+  /**
+   * Relays that rejected it, with the relay's message (`invalid: …`, `blocked: …`). Transient failures appear here
+   * only when they are not retried.
+   */
   rejected: { relay: string; reason: string }[]
-  /** SDK-4 (fase 3): stored in the outbox to resend later. Always false until the outbox exists. */
+  /** SDK-4: no relay accepted it yet; it waits in the outbox and is sent again when a relay is reachable. */
   queued: boolean
 }
 
@@ -17,11 +20,12 @@ export interface RelayFlags {
   write?: boolean
 }
 
-// Prefixes of a rejection that will not change by retrying (docs/spec/05, §2). `pow:` stays here until SDK-8.
+// Prefixes of a rejection that will not change by sending the same event again (docs/spec/05, §2). For `pow:` the
+// client mines a new event (SDK-8).
 const PERMANENT = ['invalid:', 'blocked:', 'restricted:', 'pow:']
 const MAX_ATTEMPTS = 6
 
-function isPermanent(message: string): boolean {
+export function isPermanent(message: string): boolean {
   return PERMANENT.some((p) => message.startsWith(p))
 }
 
@@ -74,6 +78,10 @@ export class Pool {
     for (const listener of this.listeners) listener(status)
   }
 
+  writerCount(): number {
+    return this.writers().length
+  }
+
   private readers(): Relay[] {
     return [...this.relays.values()].filter((r) => r.read)
   }
@@ -85,9 +93,10 @@ export class Pool {
   /**
    * SDK-3, REPL-1: sends to every write relay in parallel. Resolves at the first `OK`, or once every relay has
    * answered at least once without accepting. Relays that failed for a transient reason (connection, timeout,
-   * `rate-limited:`) keep retrying in the background with exponential backoff.
+   * `rate-limited:`) keep retrying in the background with exponential backoff, unless `retry` is false (the
+   * outbox sends again on its own, SDK-4).
    */
-  publish(event: NostrEvent): Promise<PublishResult> {
+  publish(event: NostrEvent, { retry = true }: { retry?: boolean } = {}): Promise<PublishResult> {
     const result: PublishResult = { id: event.id, accepted: [], rejected: [], queued: false }
     const writers = this.writers()
     if (writers.length === 0) return Promise.resolve(result)
@@ -108,19 +117,19 @@ export class Pool {
             if (ok || message.startsWith('duplicate:')) {
               result.accepted.push(relay.url)
               finish()
-            } else if (isPermanent(message) || n + 1 >= MAX_ATTEMPTS) {
+            } else if (isPermanent(message) || !retry || n + 1 >= MAX_ATTEMPTS) {
               result.rejected.push({ relay: relay.url, reason: message })
-            } else retry(relay, n)
+            } else again(relay, n)
             answered(n)
           },
           (error: Error) => {
-            if (n + 1 >= MAX_ATTEMPTS) result.rejected.push({ relay: relay.url, reason: `error: ${error.message}` })
-            else retry(relay, n)
+            if (!retry || n + 1 >= MAX_ATTEMPTS) result.rejected.push({ relay: relay.url, reason: `error: ${error.message}` })
+            else again(relay, n)
             answered(n)
           },
         )
       }
-      const retry = (relay: Relay, n: number) => {
+      const again = (relay: Relay, n: number) => {
         if (!this.relays.has(relay.url)) return
         setTimer(() => attempt(relay, n + 1), this.retryBaseMs * 2 ** n)
       }
