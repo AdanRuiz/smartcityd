@@ -46,6 +46,8 @@ Para probarla sin reiniciar: `Start-ScheduledTask -TaskName smartcity-agent`. Pa
 - **Delegar un bug:** crea el issue con pasos para reproducirlo y ponle la etiqueta `agent`. Entre más concreto, mejor PR.
 - **Revisar:** los PRs llegan con un resumen, los IDs de requisito que tocan y `Closes #n`. Mezclar uno cierra su issue.
 - **Desbloquear:** en un issue `agent:bloqueado`, responde lo que pidió el agente y vuelve a ponerle `agent`. Para reintentar un issue cuyo PR cerraste sin mezclar, borra también la rama `agent/issue-<n>`.
+- **Pausar desde GitHub** (también desde el celular): abre un issue, por ejemplo "Pausa del agente", con la etiqueta `agent:pausa`. Mientras siga abierto, el agente no empieza ninguna tarea; si está en medio de una, la termina y no toma la siguiente. Para reanudar, cierra el issue. La etiqueta se crea en la primera corrida; si aún no existe, créala a mano con ese nombre.
+- **Pausar en la laptop:** `Disable-ScheduledTask -TaskName smartcity-agent`; para reanudar, `Enable-ScheduledTask`.
 - **Logs:** `%LOCALAPPDATA%\smartcity-agent\logs` (se borran a los 30 días). `<fecha>.log` es la corrida y `<fecha>-claude.json`, la respuesta del modelo.
 - **Ajustes:** `run.ps1 -MaxIssues 1`, `-SkipRoadmap` y `-TaskTimeoutMinutes 20`. Para cambiarlos en la tarea programada, edita sus argumentos en `install.ps1`.
 

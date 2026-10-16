@@ -36,6 +36,8 @@ $RunId = Get-Date -Format 'yyyyMMdd-HHmmss'
 
 $LabelTodo = 'agent'
 $LabelBlocked = 'agent:bloqueado'
+# Any open issue with this label pauses the agent, so it can be stopped from GitHub (even a phone).
+$LabelPause = 'agent:pausa'
 # Paths the agent must never change; a PR touching them is not opened.
 $ProtectedPaths = '^(\.github/|scripts/agent/|LICENSE$|pnpm-lock\.yaml$|.*\.env|.*\.dev\.vars$)'
 $PrFooter = "Generado sin supervision por ``scripts/agent/run.ps1`` ($RunId). Revisar antes de mezclar.`n`n" +
@@ -118,6 +120,12 @@ function Get-GhJson([scriptblock]$Block) {
   return , @($text | ConvertFrom-Json)
 }
 
+function Test-Paused {
+  $pause = @((Get-GhJson { gh issue list --repo $Slug --label $LabelPause --state open --limit 1 --json number }) | ForEach-Object { $_ })
+  if ($pause.Count -gt 0) { Write-Host "Paused by open issue #$($pause[0].number) labeled '$LabelPause'." }
+  return $pause.Count -gt 0
+}
+
 function Write-TempFile([string]$Text) {
   $f = Join-Path $StateDir "body-$RunId.md"
   [IO.File]::WriteAllText($f, $Text, $Utf8)
@@ -197,6 +205,7 @@ try {
   }
   if (-not $online) { Write-Host 'No network after 10 min; giving up.'; return }
   Exec { gh auth status 2>&1 } | Out-Host
+  if (Test-Paused) { return }
 
   if (-not (Test-Path (Join-Path $Clone '.git'))) { Exec { git clone $RemoteUrl $Clone 2>&1 } | Out-Host }
   Exec { git -C $Clone remote set-url origin $RemoteUrl }
@@ -209,6 +218,7 @@ try {
   if (-not $DryRun) {
     Exec { gh label create $LabelTodo --repo $Slug --color 5319e7 --description 'Delegado al agente sin supervision' --force 2>&1 } | Out-Host
     Exec { gh label create $LabelBlocked --repo $Slug --color b60205 --description 'El agente no pudo resolverlo; necesita una persona' --force 2>&1 } | Out-Host
+    Exec { gh label create $LabelPause --repo $Slug --color fbca04 --description 'Un issue abierto con esta etiqueta pausa al agente' --force 2>&1 } | Out-Host
   }
 
   # 1. Bugs: oldest labeled issue first, skipping those that already have a branch.
@@ -216,7 +226,7 @@ try {
     ForEach-Object { $_ } | Sort-Object number)
   $done = 0
   foreach ($issue in $issues) {
-    if ($done -ge $MaxIssues) { break }
+    if ($done -ge $MaxIssues -or (Test-Paused)) { break }
     $branch = "agent/issue-$($issue.number)"
     if (Test-RemoteBranch $branch) { Write-Host "Skipping #$($issue.number): $branch exists."; continue }
     $template = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'prompt-issue.md'), $Utf8)
@@ -236,6 +246,7 @@ try {
   $openRoadmap = @((Get-GhJson { gh pr list --repo $Slug --state open --limit 100 --json headRefName }) |
     ForEach-Object { $_ } | Where-Object { $_.headRefName -like 'agent/roadmap-*' })
   if ($SkipRoadmap) { Write-Host 'Roadmap skipped by flag.' }
+  elseif (Test-Paused) { }
   elseif ($last -eq $today) { Write-Host 'Roadmap already attempted today.' }
   elseif ($openRoadmap.Count -gt 0) { Write-Host "Roadmap PR still open: $($openRoadmap[0].headRefName)." }
   else {
