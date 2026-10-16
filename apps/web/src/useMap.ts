@@ -79,9 +79,9 @@ export function openLocalTiles(file: File): void {
   tileListeners.forEach((l) => l())
 }
 
-/** The basemap in use: a local file if one was opened, otherwise the city's. */
+/** The basemap in use: a local file if one was opened, otherwise the city's, otherwise the one of the build. */
 export function useTiles(): string | null {
-  const { city } = useApp()
+  const { city, cityConfig } = useApp()
   const local = useSyncExternalStore(
     (l) => {
       tileListeners.add(l)
@@ -89,5 +89,5 @@ export function useTiles(): string | null {
     },
     () => localTiles,
   )
-  return local ?? cityTiles(city)
+  return local ?? cityTiles(city) ?? cityConfig.tiles ?? null
 }

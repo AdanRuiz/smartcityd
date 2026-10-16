@@ -12,6 +12,11 @@ export interface CityConfig {
   roots: string[]
   /** Used for the initial view until the `city` definition is known. */
   bbox: BBox
+  /**
+   * Basemap (PMTiles over HTTPS) used until the city definition announces its own `tiles` (APP-5). A mirror, not a
+   * dependency: without it the map shows a plain background and a local file can be opened.
+   */
+  tiles?: string
   /** Dataset shown first (`31481:<pubkey>:<d>`). Optional. */
   dataset?: string
 }
@@ -24,5 +29,7 @@ export const CITIES: CityConfig[] = [
     name: 'Guadalajara',
     roots: [],
     bbox: [20.55, -103.47, 20.78, -103.24],
+    // services/tiles-worker: OpenStreetMap extract of 2026-10-15, sha256 07e25b6c…5254939.
+    tiles: 'https://smartcity-tiles.adan0001.workers.dev/mx-gdl/20261015.pmtiles',
   },
 ]

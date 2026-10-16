@@ -7,3 +7,6 @@ dist/
 
 # Generated from the JSON Schemas by `pnpm --filter @smartcity/schemas gen`
 packages/schemas/src/generated/
+
+# Basemap extracts: regenerate with `pnpm --filter tiles-worker extract` (services/tiles-worker/README.md)
+services/tiles-worker/public/
