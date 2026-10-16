@@ -29,4 +29,6 @@ Estado: **especificación v1.0 (cerrada el 2026-10-12)**. Sin preguntas abiertas
 | [10-decisiones](docs/spec/10-decisiones.md) | Registro de decisiones (ADR) y preguntas cerradas |
 | [11-priorizacion](docs/spec/11-priorizacion.md) | Prioridad MoSCoW de cada requisito y entregable de la v1 |
 
+Diagrama de arquitectura (vista general y estructura del repo): [docs/arquitectura.drawio](docs/arquitectura.drawio). Se abre en [app.diagrams.net](https://app.diagrams.net) o con la extensión draw.io de VS Code.
+
 Para agentes de IA: empezar por [AGENTS.md](AGENTS.md).
