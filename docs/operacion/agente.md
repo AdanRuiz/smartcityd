@@ -4,11 +4,13 @@ Guía operativa, no normativa. Al iniciar sesión en la laptop del mantenedor, u
 
 No es un componente del sistema: si el agente se apaga, la ciudad no lo nota (invariante 1 de `AGENTS.md`). Ninguna pieza de la red depende de él.
 
-## Qué hace en cada arranque
+## Qué hace en cada corrida
+
+Corre 3 minutos después de iniciar sesión y luego cada hora mientras la sesión siga abierta. Una corrida sin nada que hacer solo consulta git y GitHub, no gasta cuota de Claude ni comenta en la bitácora.
 
 1. Espera la red, actualiza un clon aislado en `%LOCALAPPDATA%\smartcity-agent\repo` y fija `pnpm` con corepack.
 2. **Bugs:** toma hasta 3 issues abiertos con la etiqueta `agent`, del más antiguo al más nuevo, y salta los que ya tienen una rama `agent/issue-<n>`.
-3. **Roadmap:** si no hay un PR `agent/roadmap-*` abierto y hoy no lo ha intentado, implementa el siguiente entregable **Must** técnico de la primera fase sin terminar (`09`, `11`).
+3. **Roadmap:** si no hay un PR `agent/roadmap-*` abierto y no lo ha intentado sobre el commit actual de `main`, implementa el siguiente entregable **Must** técnico de la primera fase sin terminar (`09`, `11`). Así, al mezclar un PR del roadmap, `main` cambia y en la siguiente corrida (a más tardar en una hora) arranca la tarea siguiente. Si un intento termina bloqueado, no se repite hasta que `main` cambie.
 4. Por cada tarea abre un PR contra `main`. Si `build`, `lint`, `typecheck` o `test` fallan, el PR se abre como borrador. Si el agente no puede resolver un issue, lo comenta, le quita `agent` y le pone `agent:bloqueado`.
 5. **Errores pasajeros** (cuota agotada, límite de tasa, API saturada, red caída o la CLI que no responde): la tarea queda como *Reintento* en la bitácora, el issue no se toca, la corrida se detiene y el intento diario del roadmap no se gasta. La siguiente corrida lo reintenta. Que una sesión exceda los 45 min no cuenta como pasajero, porque se repetiría: se marca bloqueada para que la tarea se parta.
 
@@ -24,7 +26,7 @@ No es un componente del sistema: si el agente se apaga, la ciudad no lo nota (in
 | Mete dependencias (cadena de suministro) | `pnpm add/up/dlx`, `npx`, `curl` y `wget` están denegados, y el lockfile está protegido. |
 | Un issue intenta manipularlo (inyección de prompt) | Solo se toman issues con la etiqueta `agent`, que en GitHub solo pueden poner colaboradores con permiso de triage. El prompt trata el texto del issue como datos. |
 | Cobra a la API en vez de usar la suscripción | `ANTHROPIC_API_KEY` y `ANTHROPIC_AUTH_TOKEN` se borran del entorno antes de lanzar `claude`. |
-| Se acaba la cuota de uso | Máximo 3 issues y 1 tarea del roadmap por arranque, una tarea del roadmap al día y 45 minutos por tarea. La bitácora registra turnos y minutos de cada sesión. |
+| Se acaba la cuota de uso | Máximo 3 issues y 1 tarea del roadmap por corrida, un solo PR del roadmap abierto a la vez, un intento del roadmap por commit de `main` y 45 minutos por tarea. La bitácora registra turnos y minutos de cada sesión. |
 | Una actualización de Claude Code cambia el modelo sin avisar | El modelo está fijado (`run.ps1 -Model`, hoy `claude-opus-5-5`). El modelo realmente usado y la versión de la CLI quedan en cada PR y en cada comentario de la bitácora. |
 | El agente se degrada y sigue gastando cuota | Freno automático: ver "Métricas". |
 
@@ -42,7 +44,7 @@ powershell -ExecutionPolicy Bypass -File scripts\agent\run.ps1 -DryRun   # simul
 powershell -ExecutionPolicy Bypass -File scripts\agent\install.ps1       # registra la tarea al iniciar sesión
 ```
 
-Para probarla sin reiniciar: `Start-ScheduledTask -TaskName smartcity-agent`. Para quitarla: `install.ps1 -Uninstall`.
+La repetición cada hora empieza a contar desde el inicio de sesión: si acabas de registrarla, corre en el siguiente inicio de sesión o lánzala ya con `Start-ScheduledTask -TaskName smartcity-agent`. Para cambiar la frecuencia: `install.ps1 -EveryMinutes 30`. Para quitarla: `install.ps1 -Uninstall`.
 
 ## Uso diario
 

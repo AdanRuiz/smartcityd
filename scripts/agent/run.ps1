@@ -335,23 +335,24 @@ try {
     $done++
   }
 
-  # 2. Roadmap: at most once a day, and never while a previous roadmap PR is unmerged.
-  $today = Get-Date -Format 'yyyy-MM-dd'
+  # 2. Roadmap: one attempt per commit of main, never while a previous roadmap PR is unmerged.
+  # Merging the PR moves main and unlocks the next task; a blocked attempt waits for main to change.
+  $mainSha = ([string](Exec { git ls-remote $RemoteUrl refs/heads/main }) -split '\s+')[0]
   $last = if (Test-Path $RoadmapStamp) { (Get-Content $RoadmapStamp -Raw).Trim() } else { '' }
   $openRoadmap = @((Get-GhJson { gh pr list --repo $Slug --state open --limit 100 --json headRefName }) |
     ForEach-Object { $_ } | Where-Object { $_.headRefName -like 'agent/roadmap-*' })
   if ($SkipRoadmap) { Write-Host 'Roadmap skipped by flag.' }
   elseif ($StopRun) { Write-Host 'Roadmap skipped: a transient error stopped this run.' }
   elseif (Test-Paused) { }
-  elseif ($last -eq $today) { Write-Host 'Roadmap already attempted today.' }
   elseif ($openRoadmap.Count -gt 0) { Write-Host "Roadmap PR still open: $($openRoadmap[0].headRefName)." }
+  elseif ($last -eq $mainSha) { Write-Host "Roadmap already attempted on main $($mainSha.Substring(0, 7)); waiting for main to change." }
   else {
-    if (-not $DryRun) { Set-Content -Path $RoadmapStamp -Value $today -Encoding ascii }
+    if (-not $DryRun) { Set-Content -Path $RoadmapStamp -Value $mainSha -Encoding ascii }
     $prompt = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'prompt-roadmap.md'), $Utf8)
     $outcome = Invoke-Task "agent/roadmap-$RunId" $prompt ''
     Write-Host "Roadmap: $outcome"
     Add-RunRow 'roadmap' $outcome
-    # A transient failure does not use up today's roadmap attempt.
+    # A transient failure does not use up the attempt for this commit of main.
     if ($outcome -like 'retry:*' -and -not $DryRun) {
       if ($last) { Set-Content -Path $RoadmapStamp -Value $last -Encoding ascii } else { Remove-Item $RoadmapStamp -Force }
     }
