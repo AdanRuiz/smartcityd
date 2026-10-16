@@ -10,6 +10,7 @@
     "test": "vitest run",
     "dev": "wrangler dev",
     "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "deploy:b": "wrangler d1 migrations apply DB --remote --env b && wrangler deploy --env b",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "acceptance": "node scripts/acceptance.mjs",
     "load": "node scripts/load.mjs",

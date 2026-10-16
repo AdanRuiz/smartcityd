@@ -16,7 +16,7 @@ export interface CityConfig {
   dataset?: string
 }
 
-export const SEED_RELAYS = ['wss://smartcity-relay.adan0001.workers.dev']
+export const SEED_RELAYS = ['wss://smartcity-relay.adan0001.workers.dev', 'wss://smartcity-relay-b.adan0001.workers.dev']
 
 export const CITIES: CityConfig[] = [
   {

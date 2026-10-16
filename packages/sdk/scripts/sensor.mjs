@@ -15,7 +15,7 @@ if (!dataset?.startsWith(`${KIND.DATASET}:`)) {
   console.error('usage: node scripts/sensor.mjs <31481:pubkey:d> [relays] [--every 10] [--count 0] [--loc lat,lon]')
   process.exit(2)
 }
-const relays = (positional[1] ?? process.env.RELAYS ?? 'wss://smartcity-relay.adan0001.workers.dev').split(',')
+const relays = (positional[1] ?? process.env.RELAYS ?? 'wss://smartcity-relay.adan0001.workers.dev,wss://smartcity-relay-b.adan0001.workers.dev').split(',')
 const every = Number(opt('--every', 10))
 const count = Number(opt('--count', 0))
 const loc = opt('--loc', '20.6668,-103.3918').split(',').map(Number)

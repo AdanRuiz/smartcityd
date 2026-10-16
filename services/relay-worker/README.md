@@ -33,6 +33,14 @@ pnpm --filter relay-worker deploy             # aplica migraciones remotas y des
 
 Sin dominio propio queda en `https://smartcity-relay.<cuenta>.workers.dev`. La configuración está en `[vars]` de `wrangler.toml` (tabla en `07`, "Configuración").
 
+El despliegue de referencia tiene un segundo relay independiente (otro Worker, otro hub y otra base D1) en el entorno `b` de `wrangler.toml`, para que la app y el SDK publiquen y lean en dos (REPL-1):
+
+```sh
+pnpm --filter relay-worker deploy:b           # https://smartcity-relay-b.<cuenta>.workers.dev
+```
+
+Los dos están en Cloudflare: sirve para cerrar la fase 2, pero un tercero en otro proveedor o en hardware propio sigue pendiente para no depender de uno solo.
+
 ## Mediciones para cerrar la fase 1
 
 `09` exige medir en la capa gratuita real el costo de CPU de la verificación de firma y las filas escritas por evento.

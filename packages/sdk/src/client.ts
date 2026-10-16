@@ -133,8 +133,8 @@ export class ValidationError extends Error {
   }
 }
 
-// Seed list when the app gives none (REPL-5): the reference relay of the project. A convenience, not a dependency.
-export const SEED_RELAYS = ['wss://smartcity-relay.adan0001.workers.dev']
+// Seed list when the app gives none (REPL-5): the project's two reference relays. A convenience, not a dependency.
+export const SEED_RELAYS = ['wss://smartcity-relay.adan0001.workers.dev', 'wss://smartcity-relay-b.adan0001.workers.dev']
 
 const MAX_SEEN = 50_000
 

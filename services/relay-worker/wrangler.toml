@@ -28,3 +28,27 @@ WRITE_POLICY = "open"
 RATE_EVENTS_PER_MIN = "60"
 RETENTION_DAYS = "90"
 MAX_EVENT_AGE_DAYS = "30"
+
+# Second relay of the reference deployment (REPL-1, phase 2 closing criterion): `wrangler deploy --env b`.
+# Own Worker (smartcity-relay-b), hub and database, so neither depends on the other. Bindings and vars are not
+# inherited between environments, so they are repeated here.
+[env.b]
+
+[[env.b.durable_objects.bindings]]
+name = "HUB"
+class_name = "Hub"
+
+[[env.b.d1_databases]]
+binding = "DB"
+database_name = "smartcity-relay-b"
+database_id = "d0f8f9fa-89c0-43ab-a95a-7719ed79bbf1"
+migrations_dir = "migrations"
+
+[env.b.vars]
+RELAY_NAME = "SmartCity relay B"
+RELAY_CONTACT = ""
+CITIES = "*"
+WRITE_POLICY = "open"
+RATE_EVENTS_PER_MIN = "60"
+RETENTION_DAYS = "90"
+MAX_EVENT_AGE_DAYS = "30"
