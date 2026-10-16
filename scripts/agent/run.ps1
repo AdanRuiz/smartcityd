@@ -38,6 +38,13 @@ $LabelTodo = 'agent'
 $LabelBlocked = 'agent:bloqueado'
 # Any open issue with this label pauses the agent, so it can be stopped from GitHub (even a phone).
 $LabelPause = 'agent:pausa'
+# A pinned open issue with this label gets one comment per run that did something.
+$LabelLog = 'agent:bitacora'
+$Runs = New-Object System.Collections.ArrayList
+$RunError = $null
+$Slug = $null
+$LastStats = $null
+$LastPrUrl = ''
 # Paths the agent must never change; a PR touching them is not opened.
 $ProtectedPaths = '^(\.github/|scripts/agent/|LICENSE$|pnpm-lock\.yaml$|.*\.env|.*\.dev\.vars$)'
 $PrFooter = "Generado sin supervision por ``scripts/agent/run.ps1`` ($RunId). Revisar antes de mezclar.`n`n" +
@@ -91,11 +98,16 @@ function Test-Checks {
   return $null
 }
 
-function Invoke-Claude([string]$Prompt) {
+function Get-Prop($Obj, [string]$Name) {
+  $p = $Obj.PSObject.Properties[$Name]
+  if ($p) { return $p.Value } else { return $null }
+}
+
+function Invoke-Claude([string]$Prompt, [string]$Tag) {
   $promptFile = Join-Path $StateDir "prompt-$RunId.md"
   $settingsFile = Join-Path $StateDir 'claude-settings.json'
-  $outFile = Join-Path $LogDir "$RunId-claude.json"
-  $errFile = Join-Path $LogDir "$RunId-claude.err"
+  $outFile = Join-Path $LogDir "$RunId-$Tag-claude.json"
+  $errFile = Join-Path $LogDir "$RunId-$Tag-claude.err"
   [IO.File]::WriteAllText($promptFile, $Prompt, $Utf8)
   [IO.File]::WriteAllText($settingsFile, ($ClaudeSettings | ConvertTo-Json -Depth 5), $Utf8)
 
@@ -111,8 +123,14 @@ function Invoke-Claude([string]$Prompt) {
   }
   $raw = [IO.File]::ReadAllText($outFile, $Utf8)
   try { $json = $raw | ConvertFrom-Json } catch { Write-Host "Unreadable Claude output: $raw"; return $null }
-  if ($json.is_error) { Write-Host "Claude reported an error: $($json.result)"; return $null }
-  return [string]$json.result
+  $script:LastStats = @{
+    turns = Get-Prop $json 'num_turns'
+    minutes = [math]::Round([double](Get-Prop $json 'duration_ms') / 60000, 1)
+    denials = @(Get-Prop $json 'permission_denials').Count
+    usd = Get-Prop $json 'total_cost_usd'
+  }
+  if (Get-Prop $json 'is_error') { Write-Host "Claude reported an error: $(Get-Prop $json 'result')"; return $null }
+  return [string](Get-Prop $json 'result')
 }
 
 # gh prints JSON over several lines; 5.1's ConvertFrom-Json also emits arrays as one object.
@@ -136,12 +154,14 @@ function Write-TempFile([string]$Text) {
 # Returns 'pr', 'draft' or 'blocked: <reason>'.
 function Invoke-Task([string]$Branch, [string]$Prompt, [string]$Closes) {
   Write-Host "=== $Branch ==="
+  $script:LastStats = $null
+  $script:LastPrUrl = ''
   Reset-Clone
   Exec { git -C $Clone checkout -B $Branch 2>&1 } | Out-Host
   Exec { pnpm --dir $Clone install --frozen-lockfile 2>&1 } | Out-Host
   if ($DryRun) { Write-Host "[dry-run] would run Claude on $Branch"; return 'dry-run' }
 
-  $result = Invoke-Claude $Prompt
+  $result = Invoke-Claude $Prompt ($Branch -replace '^agent/', '')
   if ($null -eq $result) { return 'blocked: la sesion de Claude fallo o excedio el tiempo (ver logs locales)' }
   $lines = $result.Trim() -split "`r?`n", 2
   $first = $lines[0].Trim()
@@ -169,8 +189,57 @@ function Invoke-Task([string]$Branch, [string]$Prompt, [string]$Closes) {
   $prArgs = @('pr', 'create', '--repo', $Slug, '--base', 'main', '--head', $Branch,
     '--title', $title, '--body-file', (Write-TempFile $body))
   if ($failed) { $prArgs += '--draft' }
-  Exec { gh @prArgs 2>&1 } | Out-Host
+  $prOut = @(Exec { gh @prArgs 2>&1 })
+  $prOut | Out-Host
+  $script:LastPrUrl = [string]($prOut | Where-Object { "$_" -match '^https://' } | Select-Object -Last 1)
   if ($failed) { return 'draft' } else { return 'pr' }
+}
+
+function Add-RunRow([string]$Task, [string]$Outcome) {
+  $text = switch -Wildcard ($Outcome) {
+    'pr' { 'PR abierto' }
+    'draft' { 'PR en borrador (verificaciones rojas)' }
+    'blocked:*' { 'Bloqueado: ' + (($Outcome.Substring(8).Trim() -split "`r?`n")[0]) }
+    default { $Outcome }
+  }
+  $s = $LastStats
+  [void]$Runs.Add([pscustomobject]@{
+    task = $Task; outcome = $text; pr = $LastPrUrl
+    turns = if ($s) { $s.turns } else { '-' }
+    minutes = if ($s) { $s.minutes } else { '-' }
+    denials = if ($s) { $s.denials } else { '-' }
+    usd = if ($s -and $null -ne $s.usd) { '{0:N2}' -f [double]$s.usd } else { '-' }
+  })
+}
+
+function Get-LogIssue {
+  $found = @((Get-GhJson { gh issue list --repo $Slug --label $LabelLog --state open --limit 1 --json number }) | ForEach-Object { $_ })
+  if ($found.Count -gt 0) { return [string]$found[0].number }
+  Exec { gh label create $LabelLog --repo $Slug --color 0e8a16 --description 'Bitacora de corridas del agente' --force 2>&1 } | Out-Host
+  $tpl = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'bitacora.md'), $Utf8) -split "`r?`n", 2
+  $url = [string](Exec { gh issue create --repo $Slug --title $tpl[0].TrimStart('#', ' ') --label $LabelLog --body-file (Write-TempFile $tpl[1].Trim()) } |
+    Where-Object { "$_" -match '^https://' } | Select-Object -Last 1)
+  $number = ($url.Trim() -split '/')[-1]
+  Exec { gh issue pin $number --repo $Slug 2>&1 } -AllowFail | Out-Host
+  return $number
+}
+
+# One comment per run that ran a task or failed; quiet runs stay silent.
+function Publish-RunLog {
+  if ($DryRun -or -not $Slug -or ($Runs.Count -eq 0 -and -not $RunError)) { return }
+  $cell = { param($v) ("$v" -replace '\r?\n', ' ' -replace '\|', '\|') }
+  $lines = @("### Corrida $RunId", '')
+  if ($Runs.Count -gt 0) {
+    $lines += '| Tarea | Resultado | PR | Turnos | Min | Denegaciones | USD eq. API |'
+    $lines += '|---|---|---|---|---|---|---|'
+    foreach ($r in $Runs) {
+      $lines += "| $(& $cell $r.task) | $(& $cell $r.outcome) | $($r.pr) | $($r.turns) | $($r.minutes) | $($r.denials) | $($r.usd) |"
+    }
+  }
+  if ($RunError) { $lines += '', "**La corrida fallo:**``$(& $cell $RunError)``" }
+  $lines += '', "Log local: ``%LOCALAPPDATA%\smartcity-agent\logs\$RunId.log``"
+  $issue = Get-LogIssue
+  Exec { gh issue comment $issue --repo $Slug --body-file (Write-TempFile ($lines -join "`n")) 2>&1 } | Out-Host
 }
 
 New-Item -ItemType Directory -Force $LogDir, $BinDir | Out-Null
@@ -234,6 +303,7 @@ try {
     $prompt = "$template`n#$($issue.number): $($issue.title)`n`n$($issue.body)`n"
     $outcome = Invoke-Task $branch $prompt ([string]$issue.number)
     Write-Host "Issue #$($issue.number): $outcome"
+    Add-RunRow "#$($issue.number) $($issue.title)" $outcome
     if ($outcome -like 'blocked:*') {
       Exec { gh issue comment $issue.number --repo $Slug --body-file (Write-TempFile "El agente no pudo resolver este issue.`n`n$($outcome.Substring(8).Trim())`n`n---`n$PrFooter") 2>&1 } | Out-Host
       Exec { gh issue edit $issue.number --repo $Slug --remove-label $LabelTodo --add-label $LabelBlocked 2>&1 } | Out-Host
@@ -255,13 +325,16 @@ try {
     $prompt = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'prompt-roadmap.md'), $Utf8)
     $outcome = Invoke-Task "agent/roadmap-$RunId" $prompt ''
     Write-Host "Roadmap: $outcome"
+    Add-RunRow 'roadmap' $outcome
   }
 }
 catch {
   Write-Host "Run aborted: $_"
+  $RunError = "$_"
   exit 1
 }
 finally {
+  try { Publish-RunLog } catch { Write-Host "Could not publish the run log: $_" }
   if (Test-Path (Join-Path $Clone '.git')) { try { Reset-Clone } catch { Write-Host "Could not reset the clone: $_" } }
   $mutex.ReleaseMutex()
   Stop-Transcript | Out-Null

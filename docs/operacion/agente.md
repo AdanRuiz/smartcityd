@@ -23,7 +23,7 @@ No es un componente del sistema: si el agente se apaga, la ciudad no lo nota (in
 | Mete dependencias (cadena de suministro) | `pnpm add/up/dlx`, `npx`, `curl` y `wget` están denegados, y el lockfile está protegido. |
 | Un issue intenta manipularlo (inyección de prompt) | Solo se toman issues con la etiqueta `agent`, que en GitHub solo pueden poner colaboradores con permiso de triage. El prompt trata el texto del issue como datos. |
 | Cobra a la API en vez de usar la suscripción | `ANTHROPIC_API_KEY` y `ANTHROPIC_AUTH_TOKEN` se borran del entorno antes de lanzar `claude`. |
-| Se acaba la cuota de uso | Máximo 3 issues y 1 tarea del roadmap por arranque, una tarea del roadmap al día y 45 minutos por tarea. |
+| Se acaba la cuota de uso | Máximo 3 issues y 1 tarea del roadmap por arranque, una tarea del roadmap al día y 45 minutos por tarea. La bitácora registra turnos y minutos de cada sesión. |
 
 Todo lo que no está en la lista de permitidos (`$ClaudeSettings` en `run.ps1`) queda denegado, porque en modo `-p` no hay a quién preguntar.
 
@@ -48,7 +48,8 @@ Para probarla sin reiniciar: `Start-ScheduledTask -TaskName smartcity-agent`. Pa
 - **Desbloquear:** en un issue `agent:bloqueado`, responde lo que pidió el agente y vuelve a ponerle `agent`. Para reintentar un issue cuyo PR cerraste sin mezclar, borra también la rama `agent/issue-<n>`.
 - **Pausar desde GitHub** (también desde el celular): abre un issue, por ejemplo "Pausa del agente", con la etiqueta `agent:pausa`. Mientras siga abierto, el agente no empieza ninguna tarea; si está en medio de una, la termina y no toma la siguiente. Para reanudar, cierra el issue. La etiqueta se crea en la primera corrida; si aún no existe, créala a mano con ese nombre.
 - **Pausar en la laptop:** `Disable-ScheduledTask -TaskName smartcity-agent`; para reanudar, `Enable-ScheduledTask`.
-- **Logs:** `%LOCALAPPDATA%\smartcity-agent\logs` (se borran a los 30 días). `<fecha>.log` es la corrida y `<fecha>-claude.json`, la respuesta del modelo.
+- **Bitácora en GitHub:** el issue fijado con la etiqueta `agent:bitacora` recibe un comentario por cada corrida que ejecutó una tarea o falló. El comentario incluye tarea, resultado, PR, turnos, minutos y denegaciones de permisos. Suscríbete a ese issue para recibir los avisos en el celular. Las corridas sin nada que hacer no comentan. Si cierras el issue, el agente abre uno nuevo.
+- **Logs locales:** `%LOCALAPPDATA%\smartcity-agent\logs` (se borran a los 30 días). `<fecha>.log` es la corrida y `<fecha>-<tarea>-claude.json`, la respuesta del modelo para cada tarea.
 - **Ajustes:** `run.ps1 -MaxIssues 1`, `-SkipRoadmap` y `-TaskTimeoutMinutes 20`. Para cambiarlos en la tarea programada, edita sus argumentos en `install.ps1`.
 
 ## Límites conocidos
