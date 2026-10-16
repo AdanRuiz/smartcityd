@@ -1,6 +1,7 @@
 {
   "name": "relay-strfry",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "private": true,
   "description": "Relay Nostr estándar (strfry) con la política de escritura de SmartCity, para operar fuera de Cloudflare (ARCH-1)",
   "type": "module",

@@ -1,6 +1,7 @@
 {
   "name": "web",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "private": true,
   "description": "App web SmartCity: mapa, capas por dataset y panel de relays (docs/spec/06)",
   "type": "module",

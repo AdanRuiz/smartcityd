@@ -94,6 +94,11 @@ Formato: contexto → decisión → consecuencias. Estado: **aceptada** salvo qu
 - **Decisión:** la spec se cierra como v1.0 con todas las preguntas resueltas, y cada requisito recibe una prioridad de entrega en `11`.
 - **Consecuencias:** las palabras DEBE/DEBERÍA/PUEDE siguen indicando conformidad; MoSCoW indica qué se construye primero. Cambiar un requisito o su prioridad exige un ADR nuevo.
 
+### ADR-19 · Licencia Apache-2.0 para el código y la spec
+- **Contexto:** el repositorio no tenía licencia, así que nadie podía reutilizarlo legalmente. La fase 5 pide que terceros (apps externas, municipios, fabricantes de sensores) integren el SDK y operen sus propios relays.
+- **Decisión:** todo el repositorio, código y documentación, se publica bajo Apache-2.0 (`LICENSE`). Se prefiere a MIT por la concesión explícita de patentes, relevante en firmware IoT y en compras públicas, y a AGPL-3.0 porque el copyleft de red frenaría la adopción del SDK en apps de terceros sin proteger nada que el protocolo abierto no proteja ya.
+- **Consecuencias:** los datos no heredan esta licencia: cada `dataset` declara la suya (EVT, campo `license`) y el mapa base conserva la ODbL de OpenStreetMap con su atribución. `services/relay-strfry` usa la imagen de strfry (GPL-3.0) sin copiar su código; solo la configuración y la política de escritura de este repositorio son Apache-2.0.
+
 ## Propuestas evaluadas y descartadas
 
 Registradas para no volver a discutirlas sin información nueva. Provienen de una revisión externa de la v0.1.

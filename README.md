@@ -34,3 +34,7 @@ Desarrollo: `pnpm install`, luego `pnpm build`, `pnpm test`, `pnpm lint` y `pnpm
 Diagrama de arquitectura (vista general y estructura del repo): [docs/arquitectura.drawio](docs/arquitectura.drawio). Se abre en [app.diagrams.net](https://app.diagrams.net) o con la extensión draw.io de VS Code.
 
 Para agentes de IA: empezar por [AGENTS.md](AGENTS.md).
+
+## Licencia
+
+Código y documentación bajo [Apache-2.0](LICENSE) (ADR-19). Los datos publicados en la red llevan la licencia que declara cada `dataset`; el mapa base es © colaboradores de OpenStreetMap (ODbL).

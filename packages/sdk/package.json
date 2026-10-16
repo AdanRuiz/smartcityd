@@ -1,6 +1,7 @@
 {
   "name": "@smartcity/sdk",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "description": "SDK del protocolo SmartCity: firma, validación, pool de relays, publicación y consulta (docs/spec/05)",
   "type": "module",
   "sideEffects": false,

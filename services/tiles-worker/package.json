@@ -1,6 +1,7 @@
 {
   "name": "tiles-worker",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "private": true,
   "description": "Espejo HTTP del mapa base PMTiles de cada ciudad, con peticiones de rango (docs/spec/06, Teselas del mapa)",
   "type": "module",
