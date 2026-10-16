@@ -7,13 +7,14 @@
   "type": "module",
   "scripts": {
     "build": "wrangler deploy --dry-run --outdir dist",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json && tsc --noEmit -p tsconfig.cli.json",
     "test": "vitest run",
     "dev": "wrangler dev",
     "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
     "deploy:b": "wrangler d1 migrations apply DB --remote --env b && wrangler deploy --env b",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "acceptance": "node scripts/acceptance.mjs",
+    "snapshot:import": "tsc -p tsconfig.cli.json && node dist/cli/cli/import.js",
     "load": "node scripts/load.mjs",
     "bench:verify": "node scripts/bench-verify.mjs"
   },
