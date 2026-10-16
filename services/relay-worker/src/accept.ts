@@ -1,8 +1,10 @@
-import { ALLOWED_KINDS, ANY_CITY, MAX_FUTURE_SECONDS, isSystemKind, kindClass, validateEvent } from '@smartcity/schemas'
+import { ALLOWED_KINDS, ANY_CITY, KIND, MAX_FUTURE_SECONDS, isSystemKind, kindClass, validateEvent } from '@smartcity/schemas'
+import { getPow } from 'nostr-tools/nip13'
 import { getEventHash, verifyEvent } from 'nostr-tools/pure'
 import { IP_RATE_FACTOR, type Config } from './config.js'
 import { checkStructure, eventCity, type NostrEvent } from './event.js'
 import type { RateLimiter } from './ratelimit.js'
+import { roleBookFor, type RoleBook } from './roles.js'
 import type { SaveStatus, Store } from './store.js'
 
 export interface AcceptDeps {
@@ -11,6 +13,8 @@ export interface AcceptDeps {
   limiter: RateLimiter
   /** Seconds. */
   now: () => number
+  /** Roles from the anchors. Default: the shared book for `config.trustAnchors`. */
+  roles?: RoleBook
 }
 
 export type AcceptResult =
@@ -39,8 +43,7 @@ function idOf(raw: unknown): string {
 }
 
 /**
- * Acceptance of an event from a client (docs/spec/07, steps 1–7 and 9), then storage.
- * Step 8 (proof of work) arrives in phase 3.
+ * Acceptance of an event from a client (docs/spec/07, steps 1–9), then storage.
  */
 export async function acceptEvent(raw: unknown, ip: string, deps: AcceptDeps): Promise<AcceptResult> {
   const { config, store, limiter } = deps
@@ -83,13 +86,28 @@ export async function acceptEvent(raw: unknown, ip: string, deps: AcceptDeps): P
     if (!result.ok) return reject(`invalid: ${result.errors.join('; ')}`)
   }
 
-  // 9. Operator policy: served cities. Events for every city (`c` = `*`) and without a city always pass.
   const city = eventCity(event)
-  if (config.cities && city !== null && city !== ANY_CITY && !config.cities.includes(city)) {
-    return reject(`restricted: city ${city} is not served by this relay`)
+  const specific = city !== null && city !== ANY_CITY ? city : null
+  const roles = deps.roles ?? roleBookFor(config.trustAnchors)
+  let attested: boolean | undefined
+  const isAttested = async () => (attested ??= await roles.isAttested(event.pubkey, specific, store, now))
+
+  // 8. Proof of work (NIP-13, SPAM-1): `report` from keys without a role from the anchors.
+  if (event.kind === KIND.REPORT && config.powBitsReport > 0 && getPow(event.id) < config.powBitsReport) {
+    if (!(await isAttested())) return reject(`pow: difficulty ${config.powBitsReport} required`)
+  }
+
+  // 9. Operator policy: served cities, then who writes. Events for every city (`c` = `*`) and without a city pass
+  // the city check.
+  if (config.cities && specific !== null && !config.cities.includes(specific)) {
+    return reject(`restricted: city ${specific} is not served by this relay`)
+  }
+  if (config.writePolicy === 'roles' && !(await isAttested())) {
+    return reject('restricted: this relay only accepts keys with a role')
   }
 
   const saved = await store.save(event, now)
+  if (saved.status === 'stored' || saved.status === 'replaced') roles.saw(event)
   const duplicate = saved.status === 'stale' || saved.status === 'duplicate'
   const message =
     saved.status === 'stale' ? 'duplicate: a newer version is stored' : duplicate ? 'duplicate: already have this event' : ''

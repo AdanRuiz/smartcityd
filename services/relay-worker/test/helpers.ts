@@ -1,11 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
 import { KIND, NOSTR_KIND } from '@smartcity/schemas'
-import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure'
+import { getPow } from 'nostr-tools/nip13'
+import { finalizeEvent, generateSecretKey, getEventHash, getPublicKey } from 'nostr-tools/pure'
 import { acceptEvent } from '../src/accept.js'
 import { readConfig, type RelayVars } from '../src/config.js'
 import type { NostrEvent } from '../src/event.js'
 import { RateLimiter } from '../src/ratelimit.js'
+import { RoleBook } from '../src/roles.js'
 import { Store, type Db, type DbResult, type DbStatement } from '../src/store.js'
 
 /** D1 stand-in on node:sqlite, with the migrations of the relay applied. */
@@ -129,10 +131,26 @@ export function deletion(sk: Uint8Array, tags: string[][], createdAt = NOW + 10)
 export function relay(vars: RelayVars = {}) {
   const { db, count } = sqliteDb()
   const store = new Store(db)
-  const deps = { store, config: readConfig(vars), limiter: new RateLimiter(() => NOW * 1000), now: () => NOW }
+  const config = readConfig(vars)
+  const deps = { store, config, limiter: new RateLimiter(() => NOW * 1000), now: () => NOW, roles: new RoleBook(config.trustAnchors) }
   return {
     store,
     count,
     publish: (event: unknown, ip = '192.0.2.1') => acceptEvent(event, ip, deps),
   }
+}
+
+/** A citizen report; `bits` of NIP-13 proof of work mined into its id. */
+export function report(sk: Uint8Array, bits = 0, createdAt = NOW) {
+  const pubkey = getPublicKey(sk)
+  const tags = [['c', CITY], ['t', 'bache'], ...G]
+  const content = JSON.stringify({ v: 1, title: 'Bache', loc: [20.6668, -103.3918] })
+  for (let n = 0; ; n++) {
+    const candidate = { kind: KIND.REPORT, tags: bits > 0 ? [...tags, ['nonce', String(n), String(bits)]] : tags, content, created_at: createdAt, pubkey }
+    if (getPow(getEventHash(candidate)) >= bits) return finalizeEvent(candidate, sk) as NostrEvent
+  }
+}
+
+export function roles(sk: Uint8Array, entries: [string, string][], createdAt = NOW) {
+  return sign(sk, KIND.ROLES, [['d', CITY], ['c', CITY], ...entries.map(([pk, role]) => ['p', pk, role])], { v: 1 }, createdAt)
 }

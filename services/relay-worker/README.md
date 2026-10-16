@@ -2,9 +2,9 @@
 
 Relay de referencia sobre Cloudflare Workers + Durable Objects + D1. Especificación: [`docs/spec/07-relay-referencia.md`](../../docs/spec/07-relay-referencia.md).
 
-Estado (fase 1): WebSocket NIP-01 con hibernación, aceptación de eventos (pasos 1–7 y la parte de ciudades del 9), reemplazo de direccionables (DATA-3), borrado kind 5 (DATA-8), efímeros sin almacenar, expiración NIP-40, `POST`/`GET /v1/events`, NIP-11 y `/health`.
+Estado (fase 3): WebSocket NIP-01 con hibernación, aceptación de eventos (pasos 1 a 9 de `07`), prueba de trabajo para `report` de llaves sin rol, `WRITE_POLICY=roles`, reemplazo de direccionables (DATA-3), borrado kind 5 (DATA-8), efímeros sin almacenar, expiración NIP-40, `POST`/`GET /v1/events`, NIP-11 y `/health`.
 
-Pendiente según `09-roadmap.md`: prueba de trabajo y `WRITE_POLICY=roles` (fase 3); `GET /v1/export`, retención e importación de snapshots (fase 4; hasta entonces el relay **no purga**, RELAY-4); `MIRROR_FROM` (fase 5); adjuntos en R2 (opcional).
+Pendiente según `09-roadmap.md`: `GET /v1/export`, retención e importación de snapshots (fase 4; hasta entonces el relay **no purga**, RELAY-4); `MIRROR_FROM` (fase 5); adjuntos en R2 (opcional).
 
 ## Desarrollo
 

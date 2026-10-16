@@ -2,7 +2,7 @@ import { KIND } from '@smartcity/schemas'
 import { describe, expect, it } from 'vitest'
 import { isNew } from '../src/accept.js'
 import { filterFromQuery, matchFilter, parseFilter, type Filter } from '../src/filter.js'
-import { CITY, NOW, airDataset, dataset, deletion, key, live, observation, relay, sign } from './helpers.js'
+import { CITY, NOW, airDataset, dataset, deletion, key, live, observation, relay, report, roles, sign } from './helpers.js'
 
 const message = (r: { message: string }) => r.message
 
@@ -184,7 +184,7 @@ describe('deletion with kind 5 (test 5, DATA-8)', () => {
 
 describe('queries (test 6)', () => {
   async function populated() {
-    const r = relay()
+    const r = relay({ POW_BITS_REPORT: '0' })
     const a = key()
     const b = key()
     const events = [
@@ -255,5 +255,56 @@ describe('filters', () => {
     expect(parseFilter({ authors: ['abc'] })).toMatch(/hex/)
     expect(parseFilter({ '#g': Array.from({ length: 81 }, (_, i) => `${i}`) })).toMatch(/more than 80 values/)
     expect(filterFromQuery(new URLSearchParams({ foo: '1' }))).toBe('unknown parameter: foo')
+  })
+})
+
+describe('proof of work and roles (step 8, step 9, SPAM-1, docs/spec/04)', () => {
+  it('asks reports from keys without a role for the configured bits', async () => {
+    const r = relay({ POW_BITS_REPORT: '8' })
+    const { sk } = key()
+    expect(message(await r.publish(report(sk)))).toBe('pow: difficulty 8 required')
+    expect((await r.publish(report(sk, 8))).ok).toBe(true)
+    // Other kinds need no work.
+    expect((await r.publish(observation(sk, key().pk))).ok).toBe(true)
+  })
+
+  it('asks 16 bits by default and none when disabled', async () => {
+    const { sk } = key()
+    expect(message(await relay().publish(report(sk)))).toBe('pow: difficulty 16 required')
+    expect((await relay({ POW_BITS_REPORT: '0' }).publish(report(sk))).ok).toBe(true)
+  })
+
+  it('does not ask keys with a role from an anchor, nor blocked ones a pass', async () => {
+    const anchor = key()
+    const official = key()
+    const banned = key()
+    const r = relay({ TRUST_ANCHORS: anchor.pk, POW_BITS_REPORT: '8' })
+    expect((await r.publish(roles(anchor.sk, [[official.pk, 'operator'], [banned.pk, 'blocked']]))).ok).toBe(true)
+    expect((await r.publish(report(official.sk))).ok).toBe(true)
+    expect((await r.publish(report(anchor.sk, 0, NOW + 1))).ok).toBe(true)
+    expect(message(await r.publish(report(banned.sk)))).toBe('pow: difficulty 8 required')
+  })
+
+  it('ignores roles lists from keys that are not anchors (TRUST-4)', async () => {
+    const anchor = key()
+    const impostor = key()
+    const friend = key()
+    const r = relay({ TRUST_ANCHORS: anchor.pk, POW_BITS_REPORT: '8' })
+    expect((await r.publish(roles(impostor.sk, [[friend.pk, 'authority']]))).ok).toBe(true)
+    expect(message(await r.publish(report(friend.sk)))).toBe('pow: difficulty 8 required')
+  })
+
+  it('with WRITE_POLICY=roles takes only anchors and keys with a role', async () => {
+    const anchor = key()
+    const source = key()
+    const r = relay({ TRUST_ANCHORS: anchor.pk, WRITE_POLICY: 'roles' })
+    expect(message(await r.publish(observation(source.sk, source.pk)))).toBe('restricted: this relay only accepts keys with a role')
+    expect((await r.publish(roles(anchor.sk, [[source.pk, 'source']]))).ok).toBe(true)
+    expect((await r.publish(observation(source.sk, source.pk))).ok).toBe(true)
+  })
+
+  it('rejects a roles policy without anchors and anchors that are not pubkeys', () => {
+    expect(() => relay({ WRITE_POLICY: 'roles' })).toThrow(/TRUST_ANCHORS/)
+    expect(() => relay({ TRUST_ANCHORS: 'npub1abc' })).toThrow(/not a hex pubkey/)
   })
 })
