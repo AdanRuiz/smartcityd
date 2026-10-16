@@ -255,3 +255,16 @@ describe('reports (docs/spec/03, PRIV-3, PRIV-5, SPAM-1)', () => {
     expect((await other.reports.get(res.id))?.title).toBe('Sin red')
   })
 })
+
+describe('events signed elsewhere', () => {
+  it('sends a verified event as it is and refuses a forged one', async () => {
+    const { net, client } = network([A])
+    const sc = client()
+    const sk = generateSecretKey()
+    const event = dataset(sk)
+    expect((await sc.send(event)).accepted).toEqual([A])
+    expect(net.relay(A).events[0]!.id).toBe(event.id)
+    // A fresh client: one that already verified this id would answer with its own verified copy.
+    await expect(client().send({ ...event, content: event.content.replace('Aire', 'Agua') })).rejects.toThrow(/does not verify/)
+  })
+})

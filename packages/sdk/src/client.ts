@@ -584,6 +584,21 @@ export class Client {
       event = await this.sign(signer, template, pubkey, asked, options.signal)
       result = await this.pool.publish(event)
     }
+    return this.settle(event, result)
+  }
+
+  /**
+   * Sends an event already signed elsewhere: a root key kept offline, a device. It must verify and, for system kinds,
+   * validate; otherwise throws `ValidationError` without sending. Same delivery and outbox as `publish`.
+   */
+  async send(raw: unknown): Promise<PublishResult> {
+    const event = await this.check(raw)
+    if (!event) throw new ValidationError(['the event is malformed, does not verify or does not match its schema'])
+    return this.settle(event, await this.pool.publish(event))
+  }
+
+  /** SDK-4: with no relay accepting it and no definitive rejection, the event waits in the outbox. */
+  private async settle(event: NostrEvent, result: PublishResult): Promise<PublishResult> {
     if (result.accepted.length > 0 || this.rejectedForGood(result)) return result
     await this.store.outboxAdd({ event, queuedAt: now(), attempts: 1, lastError: result.rejected[0]?.reason ?? null })
     if (this.storage.persisted === null) void this.storage.persist()

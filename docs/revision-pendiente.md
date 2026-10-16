@@ -20,6 +20,7 @@ Cuando un punto se confirme o se cambie, bórralo de aquí; si implica cambiar u
 
 - **Qué se cerró:** la regla (TRUST-11): al menos tres custodios de organizaciones distintas, con una llave guardada fuera de línea.
 - **Qué falta:** decidir quiénes son los custodios de la ciudad piloto. Es un paso operativo de la fase 2 y bloquea la publicación del evento `city`.
+- **Qué ya está preparado (2026-10-16):** el procedimiento y la herramienta para generar llaves sin conexión, firmar la misma definición y verificar la mayoría (`operacion/ciudad-piloto.md`, `packages/sdk/scripts/city.mjs`), el mapa base y dos relays.
 
 ## 4. Dos prioridades discutibles
 

@@ -56,6 +56,7 @@ En navegador, con almacén y cola que sobreviven a recargas: `createClient({ ...
 | TRUST-4, TRUST-7, TRUST-10 | Solo cuentan las listas `roles` firmadas por las anclas; las anclas cuentan como `authority`. `sc.trustOf(evento)` y `sc.trust.levelOf(lectura)` calculan `verified` (rol, o llave listada en `keys` de una fuente cuyo dueño tiene rol), `flagged` (llave `blocked`, o etiqueta 1985 / denuncia 1984 de un `moderator`) o `community`. Nunca se toma del evento; `sc.trust.setAnchors()` lo recalcula y avisa por `sc.trust.onChange()`. |
 | TRUST-5 | `observations.query` y `reports.query` aceptan `trust` con los niveles que se quieren. |
 | `03`, PRIV-3, PRIV-5 | `reports.create` firma por defecto con una llave nueva (sin firmante en el cliente basta) y redondea `loc` a 4 decimales. El estado de un reporte es el del `report_update` oficial más reciente (autor `authority` u `operator`); los demás son comentarios. |
+| — | `sc.send(evento)` publica un evento ya firmado en otro lado (una raíz fuera de línea, un dispositivo) tras verificarlo, con la misma cola. |
 | ID-2, SEC-3 | `localSigner` guarda la llave dentro del cierre y no la expone. `encryptSecretKey`/`decryptSecretKey` cifran con NIP-49 para guardarla. |
 
 ## Verificación y minado en Web Workers (navegador)
@@ -79,6 +80,8 @@ const sc = await createClient({
 pnpm --filter @smartcity/sdk test        # sobre un relay falso en memoria
 pnpm --filter @smartcity/sdk e2e wss://relay-a,wss://relay-b   # NFR-1 contra relays reales (requiere build)
 ```
+
+`city` (`node scripts/city.mjs`) es la herramienta de los custodios: llaves raíz cifradas, borradores de `city`, `roles` y del dataset de calidad del aire, firma sin conexión, verificación de la mayoría (TRUST-12) y publicación con `sc.send`. Guía en [`docs/operacion/ciudad-piloto.md`](../../docs/operacion/ciudad-piloto.md).
 
 `sensor` (`node scripts/sensor.mjs <dirección del dataset> [relays] --every 10`) simula un sensor que publica una lectura cada N segundos e imprime la hora de cada envío, para medir NFR-1 contra la app abierta en otra máquina.
 

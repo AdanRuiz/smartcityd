@@ -7,11 +7,15 @@ export interface Verifier {
   close?(): void
 }
 
-/** Verifies on the calling thread. Default outside the browser. */
+/**
+ * Verifies on the calling thread. Default outside the browser. It checks a plain copy: nostr-tools remembers a result
+ * on the object it verified, and a copy made with spread of a verified event would carry that mark with altered fields.
+ */
 export const inlineVerifier: Verifier = {
   verify: async (event) => {
     try {
-      return verifyEvent(event)
+      const { id, pubkey, created_at, kind, tags, content, sig } = event
+      return verifyEvent({ id, pubkey, created_at, kind, tags, content, sig })
     } catch {
       return false
     }
