@@ -33,7 +33,7 @@ Desarrollo: `pnpm install`, luego `pnpm build`, `pnpm test`, `pnpm lint` y `pnpm
 
 Diagrama de arquitectura (vista general y estructura del repo): [docs/arquitectura.drawio](docs/arquitectura.drawio). Se abre en [app.diagrams.net](https://app.diagrams.net) o con la extensión draw.io de VS Code.
 
-Para agentes de IA: empezar por [AGENTS.md](AGENTS.md).
+Para agentes de IA: empezar por [AGENTS.md](AGENTS.md). Agente de desarrollo sin supervisión (bugs con etiqueta `agent` y roadmap, como PRs): [docs/operacion/agente.md](docs/operacion/agente.md).
 
 ## Licencia
 
