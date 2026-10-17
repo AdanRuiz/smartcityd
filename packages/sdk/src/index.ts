@@ -30,6 +30,7 @@ export { MAX_CELLS, coverBBox, encodeGeohash, geoTags, inBBox, roundCoord, type 
 export type { PublishResult, RelayFlags } from './pool.js'
 export { PowCancelled, getPow, inlineMiner, workerMiner, type CancelSignal, type Miner } from './pow.js'
 export type { Filter, RelayState, RelayStatus } from './relay.js'
+export { APP_SLUG, releaseD, releaseTemplate, type ReleaseInput } from './release.js'
 export type { WebSocketConstructor, WebSocketLike } from './runtime.js'
 export {
   decryptSecretKey,
