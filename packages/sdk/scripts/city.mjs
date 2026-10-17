@@ -1,5 +1,5 @@
 // Herramienta de los custodios de una ciudad (docs/operacion/ciudad-piloto.md): llaves raíz, definición `city`, lista
-// `roles` y datasets oficiales. Redactar y firmar no usa la red, así que se puede hacer en una máquina sin conexión;
+// `roles` y datasets oficiales; también el `release` de la app que firman los desarrolladores. Redactar y firmar no usa la red, así que se puede hacer en una máquina sin conexión;
 // solo `publish` habla con relays.
 //
 //   node scripts/city.mjs keygen --out custodio-a.ncryptsec
@@ -7,17 +7,23 @@
 //        --tz America/Mexico_City --relays wss://a,wss://b --roots npub1…,npub1…,npub1… [--tiles-x <sha256> --tiles-url <https>]
 //   node scripts/city.mjs draft-roles roles.draft.json --id mx-gdl --entry npub1…:authority:"Ayuntamiento" --entry …
 //   node scripts/city.mjs draft-dataset aire.draft.json --id mx-gdl            # calidad del aire (docs/spec/03)
+//   node scripts/city.mjs draft-release release.draft.json [--file ../../apps/web/dist/smartcity.html] [--version 1.0.0]
+//        [--commit <git hash>] [--channel stable|beta] --url https://…/smartcity.html --mirror https://… [--notes …]
+//        [--dist-cid bafy… --dist-magnet magnet:?…]                    # versión de la app (06), firma el desarrollador
 //   node scripts/city.mjs sign city.draft.json --key custodio-a.ncryptsec --out city.custodio-a.json
 //   node scripts/city.mjs verify city.*.json                                    # firmas, esquema y mayoría (TRUST-12)
 //   node scripts/city.mjs publish city.*.json roles.*.json [--relays wss://a,wss://b]
 //
 // La frase de la llave se pide por teclado (sin eco) o se toma de SC_PASSPHRASE.
+import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
+import { fileURLToPath } from 'node:url'
 import { KIND, ROLES, isCityId, validateEvent } from '@smartcity/schemas'
 import { decode, npubEncode } from 'nostr-tools/nip19'
 import { finalizeEvent, getPublicKey, verifyEvent } from 'nostr-tools/pure'
-import { SEED_RELAYS, createClient, decryptSecretKey, encryptSecretKey, generateSecretKey } from '../dist/index.js'
+import { SEED_RELAYS, createClient, decryptSecretKey, encryptSecretKey, generateSecretKey, releaseTemplate } from '../dist/index.js'
 
 const [command, ...args] = process.argv.slice(2)
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback)
@@ -136,6 +142,45 @@ switch (command) {
     }
     const city = args.includes('--any-city') ? '*' : cityId()
     writeDraft(path, KIND.DATASET, [['d', opt('--d', 'air-quality')], ['c', city], ['t', 'ambiente']], content)
+    break
+  }
+
+  case 'draft-release': {
+    const [path] = positional
+    if (!path) fail('usage: draft-release <out.json> --url https://…/smartcity.html [--mirror …] (see the header)')
+    // APP-4: the single file is the referenced artifact; its sha256 goes in `x` and `single.x` (DIST-2).
+    const file = opt('--file', fileURLToPath(new URL('../../../apps/web/dist/smartcity.html', import.meta.url)))
+    const bytes = readFileSync(file)
+    const version = opt('--version', null) ?? readJson(fileURLToPath(new URL('../../../apps/web/package.json', import.meta.url))).version
+    let commit = opt('--commit', null)
+    if (!commit) {
+      try {
+        commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+      } catch {
+        fail('--commit <git hash> is required outside a git checkout')
+      }
+    }
+    const dist = {
+      ...(opt('--dist-cid', null) ? { cid: opt('--dist-cid') } : {}),
+      ...(opt('--dist-magnet', null) ? { magnet: opt('--dist-magnet') } : {}),
+    }
+    let template
+    try {
+      template = releaseTemplate({
+        channel: opt('--channel', 'stable'),
+        version,
+        commit,
+        single: { x: createHash('sha256').update(bytes).digest('hex'), size: bytes.length, urls: all('--url') },
+        dist,
+        mirrors: all('--mirror'),
+        notes: opt('--notes', undefined),
+      })
+    } catch (e) {
+      fail(e.message)
+    }
+    if (all('--url').length === 0) console.warn('warning: no --url; the file can only be found by its hash (torrent, IPFS, copies)')
+    writeFileSync(path, `${JSON.stringify(template, null, 2)}\n`)
+    console.log(`${path}: ${version} (${commit.slice(0, 12)}), ${file}: ${bytes.length} bytes, sha256 ${JSON.parse(template.content).single.x}`)
     break
   }
 

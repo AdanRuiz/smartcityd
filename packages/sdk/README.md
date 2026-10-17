@@ -83,6 +83,15 @@ pnpm --filter @smartcity/sdk e2e wss://relay-a,wss://relay-b   # NFR-1 contra re
 
 `city` (`node scripts/city.mjs`) es la herramienta de los custodios: llaves raíz cifradas, borradores de `city`, `roles` y del dataset de calidad del aire, firma sin conexión, verificación de la mayoría (TRUST-12) y publicación con `sc.send`. Guía en [`docs/operacion/ciudad-piloto.md`](../../docs/operacion/ciudad-piloto.md).
 
+`draft-release` (en la misma herramienta) redacta el evento `release` (kind 31486, `06`) de una versión de la app con `releaseTemplate`: lee `apps/web/dist/smartcity.html` (o `--file`) y pone su sha256 en el tag `x` y en `single.x` (DIST-2), su tamaño, las `--url` de descarga, los `--mirror`, la versión de `apps/web/package.json` (o `--version`), el commit de `git rev-parse HEAD` (o `--commit`) y, si se dan, `--dist-cid` y `--dist-magnet`. Canal `stable` por defecto (`--channel beta`). El desarrollador lo firma con `sign --key <su llave>` y lo publica con `publish`, como los demás borradores:
+
+```sh
+pnpm build
+node scripts/city.mjs draft-release release.draft.json --url https://…/smartcity.html --mirror https://smartcity-web.pages.dev
+node scripts/city.mjs sign release.draft.json --key desarrollador.ncryptsec --out release.json
+node scripts/city.mjs publish release.json
+```
+
 `sensor` (`node scripts/sensor.mjs <dirección del dataset> [relays] --every 10`) simula un sensor que publica una lectura cada N segundos e imprime la hora de cada envío, para medir NFR-1 contra la app abierta en otra máquina.
 
 `e2e` publica un dataset `sdk-e2e` y observaciones con una llave desechable y mide cuánto tarda cada una en llegar a otro cliente suscrito. Contra `smartcity-relay.adan0001.workers.dev` (un relay, 2026-10-16): 15/15 recibidas, p50 138 ms, p95 246 ms. Contra los dos relays de referencia (`smartcity-relay` y `smartcity-relay-b`, 2026-10-16): 20/20 recibidas, p50 84 ms, p95 225 ms, y cada relay guardó las 20.
