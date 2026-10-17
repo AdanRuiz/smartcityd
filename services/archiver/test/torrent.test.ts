@@ -6,6 +6,7 @@ import { KIND, canonicalLine, validateEvent, type SignedEvent } from '@smartcity
 import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure'
 import { describe, expect, it } from 'vitest'
 import { GRACE_SECONDS } from '../src/daily.js'
+import { fileCid } from '../src/ipfs.js'
 import { runSnapshot } from '../src/snapshot.js'
 import { DEFAULT_TRACKERS, bencode, createTorrent, pieceLength, seedUrl } from '../src/torrent.js'
 
@@ -111,7 +112,9 @@ describe('archiver snapshot with distribution (DIST-1 to DIST-3)', () => {
     )
     const torrent = await readFile(result.files.torrent)
     const event = JSON.parse(await readFile(result.files.event, 'utf8')) as SignedEvent
-    const content = JSON.parse(event.content) as { magnet: string; urls: string[] }
+    const content = JSON.parse(event.content) as { cid: string; magnet: string; urls: string[] }
+    expect(content.cid).toBe(fileCid(await readFile(result.files.archive)))
+    expect(content.cid).toMatch(/^bafkrei[a-z2-7]{52}$/) // a small archive is one raw block
     expect(content.urls).toEqual(['https://mirror.example/sc/sc_mx-gdl_2025-10-09.ndjson.gz'])
     expect(content.magnet).toMatch(/^magnet:\?xt=urn:btih:[0-9a-f]{40}&/)
     expect(content.magnet).toContain(`ws=${encodeURIComponent(content.urls[0]!)}`)

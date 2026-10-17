@@ -5,6 +5,7 @@ import { gunzipSync } from 'node:zlib'
 import { KIND, NOSTR_KIND, isCityId, utcDayRange, validateContent } from '@smartcity/schemas'
 import { GRACE_SECONDS, buildAddendum, buildDaily, type DailySnapshot } from './daily.js'
 import { fetchDay, fetchDeletions, wsUrl, type Fetch } from './relays.js'
+import { fileCid } from './ipfs.js'
 import { createTorrent, seedUrl } from './torrent.js'
 
 export interface SnapshotOptions {
@@ -100,13 +101,14 @@ async function readRelays(options: SnapshotOptions, since: number, deps: Snapsho
 }
 
 /**
- * DIST-1 to DIST-3: the torrent of the file, with its web seeds, and the `magnet` and `urls` of the event. They go
- * into the content before signing, so the signed event already says where to download the file.
+ * DIST-1 to DIST-3: the IPFS `cid`, the torrent of the file with its web seeds, and the `magnet` and `urls` of the
+ * event. They go into the content before signing, so the signed event already says where to download the file.
  */
 function distribute(snapshot: DailySnapshot, options: SnapshotOptions) {
   const urls = (options.webSeeds ?? []).map((base) => seedUrl(base, snapshot.name))
   const torrent = createTorrent(snapshot.gzip, { name: snapshot.name, trackers: options.trackers, webSeeds: urls })
-  const content = { ...snapshot.content, magnet: torrent.magnet, ...(urls.length > 0 ? { urls } : {}) }
+  const cid = fileCid(snapshot.gzip)
+  const content = { ...snapshot.content, cid, magnet: torrent.magnet, ...(urls.length > 0 ? { urls } : {}) }
   const valid = validateContent(KIND.SNAPSHOT, content)
   if (!valid.ok) throw new Error(`snapshot content does not validate: ${valid.errors.join('; ')}`)
   snapshot.content = content
@@ -121,6 +123,7 @@ async function write(files: Files, snapshot: DailySnapshot, options: SnapshotOpt
   await writeFile(files.torrent, torrent.bytes, { flag: 'wx' })
   await writeFile(files.event, JSON.stringify(snapshot.template, null, 2) + '\n', { flag: 'wx' })
   log(`${files.torrent}: btih ${torrent.infoHash}`)
+  log(`${snapshot.name}: cid ${snapshot.content.cid} (pin with: ipfs add --cid-version=1 ${snapshot.name})`)
   log(
     `${snapshot.name}: ${snapshot.content.count} events, ${snapshot.deleted} deleted, ` +
       `${snapshot.discarded.length} discarded, x=${snapshot.content.x}`,

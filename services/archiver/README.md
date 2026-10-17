@@ -2,7 +2,7 @@
 
 CLI de snapshots. Especificación: [`docs/spec/06-distribucion-y-persistencia.md`](../../docs/spec/06-distribucion-y-persistencia.md).
 
-Estado (fase 4): arma el archivo diario, sus adendas y el evento `snapshot` sin firmar de cada uno (SNAP-1, SNAP-2, SNAP-3, SNAP-5), y el `.torrent` de cada archivo con sus web seeds, con `magnet` y `urls` ya en el evento (DIST-1 a DIST-3, parte BitTorrent). Pendientes según `09-roadmap.md`: firma y publicación del evento, subir el archivo a los web seeds, IPFS (`cid`) y el sello OpenTimestamps con `--verify` (SNAP-7).
+Estado (fase 4): arma el archivo diario, sus adendas y el evento `snapshot` sin firmar de cada uno (SNAP-1, SNAP-2, SNAP-3, SNAP-5), el `.torrent` de cada archivo con sus web seeds y su CID de IPFS, con `cid`, `magnet` y `urls` ya en el evento (DIST-1 a DIST-3). Pendientes según `09-roadmap.md`: firma y publicación del evento, subir el archivo a los web seeds, fijarlo en IPFS y el sello OpenTimestamps con `--verify` (SNAP-7).
 
 Corre en la máquina del archivista o en CI, no en un Worker. Depende solo de `@smartcity/schemas`, `nostr-tools` y Node. Agregar una dependencia externa cambia `pnpm-lock.yaml`, y eso lo hace una persona, no el agente (`docs/operacion/agente.md`).
 
@@ -18,7 +18,7 @@ node dist/cli.js snapshot --city mx-gdl --day 2026-10-09 \
 - Lee el día de cada relay con `GET /v1/export?c=&day=` siguiendo el `cursor`, y une por `id` (SNAP-5, DATA-6). Un relay que falla se reporta y se omite; si ninguno responde no escribe nada.
 - Verifica `id` y `sig` de cada evento y el esquema de los kinds del sistema; deja fuera, y lo reporta, lo que no sea de la ciudad, del día o de un kind archivable (regulares y direccionables) y todo evento con `expiration` (NIP-40), salvo los kind 5 (SNAP-16).
 - Omite los eventos con un kind 5 válido de su autor que conozca cualquiera de los relays (`GET /v1/events?kinds=5&since=`), por `e` y por `a` (SNAP-3, DATA-8). No aplica otra política de exclusión: `policy` es `"none"`.
-- Escribe `sc_<city>_<día>.ndjson.gz`, su `sc_<city>_<día>.ndjson.gz.torrent` y `sc_<city>_<día>.snapshot.json`, el evento kind 1482 por firmar con `x`, `file`, `count`, `from`, `to`, `relays`, `magnet` y, con `--web-seed`, `urls`. Nunca sobrescribe un archivo que ya existe (SNAP-2).
+- Escribe `sc_<city>_<día>.ndjson.gz`, su `sc_<city>_<día>.ndjson.gz.torrent` y `sc_<city>_<día>.snapshot.json`, el evento kind 1482 por firmar con `x`, `file`, `count`, `from`, `to`, `relays`, `cid`, `magnet` y, con `--web-seed`, `urls`. Nunca sobrescribe un archivo que ya existe (SNAP-2).
 
 Sale con código 0 si escribió los archivos, aunque algún relay no se haya podido leer; los relays omitidos quedan en el log.
 
@@ -28,6 +28,11 @@ Sale con código 0 si escribió los archivos, aunque algún relay no se haya pod
 - `--web-seed <base>` (repetible): base HTTP(S) donde se publicará el archivo. La URL de cada archivo (`<base>/<nombre>`) va al torrent como web seed (BEP-19), al magnet como `ws=` y al evento como `urls`. El archivista sube el archivo ahí después; mientras viva algún espejo el torrent tiene fuente.
 - `--tracker <url>` (repetible) reemplaza los trackers por defecto (`DEFAULT_TRACKERS` en `src/torrent.ts`: tres UDP públicos y uno `wss:` para WebTorrent). Sin ninguno el torrent funciona por DHT y web seeds.
 - Para sembrar, abre el `.torrent` en cualquier cliente BitTorrent con el `.ndjson.gz` en la misma carpeta.
+
+### IPFS (DIST-1, ADR-15)
+
+- El `cid` se calcula sin nodo ni dependencias (`src/ipfs.ts`) y es el que da `ipfs add --cid-version=1` con los valores por defecto de kubo: bloques de 256 KiB como hojas `raw`, árbol UnixFS balanceado de hasta 174 enlaces por nodo y sha2-256. Un archivo de un solo bloque es un CID `raw` (`bafkrei…`); uno mayor, `dag-pb` (`bafybei…`).
+- El archivista no sube nada a IPFS: para fijar el archivo, `ipfs add --cid-version=1 <archivo>` en su nodo (o en el de cualquier voluntario) devuelve el mismo `cid` del evento. Con otras opciones (`--chunker`, `--raw-leaves=false`, CIDv0) el CID cambia.
 
 ## `archiver addendum`
 
