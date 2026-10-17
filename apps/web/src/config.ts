@@ -42,6 +42,9 @@ export const CITIES: CityConfig[] = [
 export const GEO = {
   ipUrl: 'https://get.geojs.io/v1/ip/geo.json',
   searchUrl: 'https://photon.komoot.io/api/',
+  /** APP-16: world basemap (OpenFreeMap, free and without a key) where the city has no tiles of its own. */
+  worldStyle: 'https://tiles.openfreemap.org/styles/positron',
+  worldStyleDark: 'https://tiles.openfreemap.org/styles/dark',
   reverseUrl: 'https://photon.komoot.io/reverse',
   suggestions: 6,
   debounceMs: 300,
