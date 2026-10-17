@@ -4,14 +4,16 @@ App web SmartCity: mapa de una capa de datos en vivo, reportes ciudadanos, confi
 
 Estado (fase 3): mapa con MapLibre y PMTiles, capa de un dataset de observaciones con suscripción en vivo por el área visible y filtro por nivel de confianza, reportes ciudadanos (alta sin conexión, historial, estado oficial), página de confianza (anclas, definiciones de la ciudad, llaves con rol), panel de relays con estado y lista semilla editable, firmante NIP-07 o llave local cifrada con exportación, almacén local y cola de salida en IndexedDB, Service Worker por HTTP(S). Abre desde `file://`, desde cualquier subruta y desde un servidor estático. Espejo en Cloudflare Pages: <https://smartcity-web.pages.dev/> (`npx wrangler pages deploy apps/web/dist --project-name smartcity-web --branch main`); es una copia más, no una dependencia.
 
-Pendiente según `09-roadmap.md`: fotos en reportes (PRIV-4, SEC-4), agregados según nivel (TRUST-6), código QR de las huellas (TRUST-8), detección de atípicos (SPAM-3, Could); `smartcity.html` en un solo archivo, `release` y "Acerca de" (fase 4).
+Pendiente según `09-roadmap.md`: fotos en reportes (PRIV-4, SEC-4), agregados según nivel (TRUST-6), código QR de las huellas (TRUST-8), detección de atípicos (SPAM-3, Could); evento `release` y "Acerca de" (fase 4).
 
 ## Desarrollo
 
 ```sh
 pnpm --filter web dev        # servidor de desarrollo de Vite
-pnpm --filter web build      # dist/: index.html + un JS clásico + un CSS
+pnpm --filter web build      # dist/: index.html + un JS clásico + un CSS, y dist/smartcity.html (archivo único)
+pnpm --filter web test       # pruebas del armado de smartcity.html
 pnpm --filter web check      # abre dist/index.html por file:// en Chrome sin interfaz y reporta errores
+pnpm --filter web check file:///<ruta>/dist/smartcity.html
 pnpm --filter web check http://localhost:4173/ --wait 15 --shot captura.png
 ```
 
@@ -26,6 +28,7 @@ Para ver datos en el mapa sin sensor real: `node packages/sdk/scripts/sensor.mjs
 | APP-1 | Build estático; sin funciones serverless ni variables de entorno en tiempo de ejecución. |
 | APP-2 | `base: './'` y `HashRouter`. Chrome no carga scripts *module* desde `file://`, así que el build emite **un solo script clásico** con `defer` (formato IIFE, sin división de código) y un CSS aparte. Los workers arrancan desde código en memoria (`blob:`); bajo `file://` el de MapLibre se fuerza a worker clásico, porque Chrome rechaza workers *module* desde `blob:` en ese origen. Comprobado con `check` en `file://` y en HTTP. |
 | APP-3 | Todo va en el paquete. El mapa base no usa capas de etiquetas porque requieren archivos de glifos de un servidor. |
+| APP-4 | El build emite las dos variantes: `dist/` (multiarchivo, con Service Worker) y `dist/smartcity.html`, la misma app en un solo archivo (~2,2 MB) para abrir con doble clic tras bajarlo por torrent, USB o correo. `build/single-file.ts` mete el script y el CSS dentro del HTML (el script al final de `<body>`, porque uno en línea no se puede diferir) y los permite en la CSP por su sha256, sin `unsafe-inline`; sin `'self'` en `worker-src`. Una `<meta name="smartcity-variant" content="single-file">` le dice a la app que no registre el Service Worker aunque un espejo sirva el archivo. Comprobado con `check` desde `file://`: relays conectados y sin violaciones de CSP. |
 | APP-5, REPL-5, TRUST-1 | `src/config.ts`: relays semilla y ciudades con sus llaves raíz. El usuario edita los relays en el panel; se guardan en `localStorage` del origen (APP-11). |
 | APP-7 | El build genera `sw.js` con la lista de sus archivos: guarda la interfaz para abrir sin red cuando se sirve por HTTP(S) (comprobado recargando sin red tras la primera visita). Desde `file://` o sin él la app funciona igual. Los datos no pasan por él: viven en IndexedDB. |
 | APP-9 | No descarga ni ejecuta código. |

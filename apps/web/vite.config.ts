@@ -2,23 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
-
-// SEC-2. `worker-src blob:` because the map, signature and proof-of-work workers start from in-memory code (works from
-// file://); 'self' for the Service Worker.
-// `ws:` only for a relay on this machine during development.
-const CSP = [
-  "default-src 'self'",
-  "script-src 'self'",
-  "style-src 'self'",
-  "img-src 'self' data: blob:",
-  "font-src 'self'",
-  "worker-src 'self' blob:",
-  "child-src blob:",
-  "connect-src 'self' wss: https: ws://localhost:* ws://127.0.0.1:* data: blob:",
-  "object-src 'none'",
-  "base-uri 'none'",
-  "form-action 'none'",
-].join('; ')
+import { CSP, SINGLE_FILE, singleFileHtml } from './build/single-file'
 
 /**
  * APP-2: browsers refuse module scripts from file://, so the build emits one classic script, loaded with `defer`
@@ -33,7 +17,7 @@ function staticApp(): Plugin {
       return html
         .replace(/<script type="module" crossorigin src="([^"]+)"><\/script>/g, '<script defer src="$1"></script>')
         .replace(/<link rel="stylesheet" crossorigin href=/g, '<link rel="stylesheet" href=')
-        .replace('<meta charset="UTF-8" />', `<meta charset="UTF-8" />\n    <meta http-equiv="Content-Security-Policy" content="${CSP}" />`)
+        .replace('<meta charset="UTF-8" />', `<meta charset="UTF-8" />\n    <meta http-equiv="Content-Security-Policy" content="${CSP.join('; ')}" />`)
     },
   }
 }
@@ -60,9 +44,33 @@ function serviceWorker(): Plugin {
   }
 }
 
+/**
+ * APP-4: besides dist/ (several files, with Service Worker), the build emits `smartcity.html`, the same app in one
+ * self-contained file, without Service Worker.
+ */
+function singleFile(): Plugin {
+  return {
+    name: 'smartcity-single-file',
+    apply: 'build',
+    // After Vite emits index.html and the stylesheet.
+    enforce: 'post',
+    generateBundle(_, bundle) {
+      const text = (fileName: string) => {
+        const output = bundle[fileName]
+        if (!output) return undefined
+        if (output.type === 'chunk') return output.code
+        return typeof output.source === 'string' ? output.source : new TextDecoder().decode(output.source)
+      }
+      const html = text('index.html')
+      if (html === undefined) throw new Error('single file: index.html not in the bundle')
+      this.emitFile({ type: 'asset', fileName: SINGLE_FILE, source: singleFileHtml(html, text) })
+    },
+  }
+}
+
 export default defineConfig({
   base: './',
-  plugins: [react(), staticApp(), serviceWorker()],
+  plugins: [react(), staticApp(), serviceWorker(), singleFile()],
   worker: { format: 'iife' },
   build: {
     target: 'es2022',
