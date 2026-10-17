@@ -1,5 +1,8 @@
+import { useEffect } from 'react'
 import { HashRouter, NavLink, Route, Routes } from 'react-router'
 import { ClientProvider, useApp, useOutbox, useRelayStatus } from './client'
+import { CityPicker } from './geo/CityPicker'
+import { startAutoLocate, usePlace } from './geo/store'
 import { IdentityPage } from './pages/IdentityPage'
 import { MapPage } from './pages/MapPage'
 import { RelaysPage } from './pages/RelaysPage'
@@ -11,10 +14,12 @@ function Header() {
   const relays = useRelayStatus()
   const outbox = useOutbox()
   const open = relays.filter((r) => r.state === 'open').length
+  const place = usePlace()
+  useEffect(startAutoLocate, [])
   return (
     <header className="bar">
       <strong className="brand">SmartCity</strong>
-      <span className="city">{city?.content.name ?? cityConfig.name}</span>
+      <CityPicker name={place?.place.name ?? city?.content.name ?? cityConfig.name} />
       <nav>
         <NavLink to="/" end>
           Mapa

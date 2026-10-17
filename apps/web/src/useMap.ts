@@ -2,6 +2,7 @@ import type { BBox, City } from '@smartcity/sdk'
 import { Map as MapLibreMap } from 'maplibre-gl'
 import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
 import { useApp } from './client'
+import { getPlace, subscribePlace } from './geo/store'
 import { mapStyle, registerLocalTiles } from './maplib'
 
 const darkScheme = () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
@@ -26,12 +27,14 @@ export function useCityMap(container: RefObject<HTMLDivElement | null>, tiles: s
   const [ready, setReady] = useState(false)
   const [view, setView] = useState<BBox | null>(null)
   const cityBox = city?.content.bbox ?? cityConfig.bbox
+  // APP-15: a place already chosen or detected sets the first view.
+  const startBox = getPlace()?.place.bbox ?? cityBox
   const layers = useRef(addLayers)
   layers.current = addLayers
 
   // Created once.
   useEffect(() => {
-    const [minLat, minLon, maxLat, maxLon] = cityBox
+    const [minLat, minLon, maxLat, maxLon] = startBox
     const map = new MapLibreMap({
       container: container.current!,
       style: mapStyle(tiles, darkScheme()),
@@ -52,7 +55,13 @@ export function useCityMap(container: RefObject<HTMLDivElement | null>, tiles: s
     }
     map.on('load', updateView)
     map.on('moveend', updateView)
+    // APP-15: go to each new place.
+    const stopPlace = subscribePlace(() => {
+      const box = getPlace()?.place.bbox
+      if (box) map.fitBounds([[box[1], box[0]], [box[3], box[2]]], { duration: 1200 })
+    })
     return () => {
+      stopPlace()
       map.remove()
       mapRef.current = null
       setReady(false)

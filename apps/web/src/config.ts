@@ -33,3 +33,17 @@ export const CITIES: CityConfig[] = [
     tiles: 'https://smartcity-tiles.adan0001.workers.dev/mx-gdl/20261015.pmtiles',
   },
 ]
+
+/**
+ * APP-12 to APP-14: public services for locating the user and searching cities. All optional (empty string turns
+ * one off) and free without a key; if they fail the app keeps the configured city. Swap them for any service with
+ * the same response format (geojs.io for the IP, Photon for search and reverse lookup).
+ */
+export const GEO = {
+  ipUrl: 'https://get.geojs.io/v1/ip/geo.json',
+  searchUrl: 'https://photon.komoot.io/api/',
+  reverseUrl: 'https://photon.komoot.io/reverse',
+  suggestions: 6,
+  debounceMs: 300,
+  timeoutMs: 8000,
+}

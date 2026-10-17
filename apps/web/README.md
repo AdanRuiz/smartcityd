@@ -33,6 +33,7 @@ Para ver datos en el mapa sin sensor real: `node packages/sdk/scripts/sensor.mjs
 | SEC-1 | El texto de eventos se pinta siempre como texto de React; no hay `dangerouslySetInnerHTML` ni enlaces generados desde eventos. |
 | SEC-2 | CSP en `<meta>`, añadida en el build: `default-src 'self'`, `script-src 'self'` sin `unsafe-eval` ni `unsafe-inline`, `connect-src` abierto a `wss:` y `https:`, `worker-src 'self' blob:`. En desarrollo no se aplica porque Vite inyecta un preámbulo en línea. |
 | PRIV-7 | Sin analítica ni telemetría. `referrer` desactivado. |
+| APP-12 a APP-15 | `src/geo/`: `places.ts` consulta los servicios de `GEO` en `config.ts` (IP, búsqueda y nombre de la posición), `store.ts` guarda el lugar actual (la elección manual manda y se recuerda) y `CityPicker.tsx` es el nombre de la ciudad con el botón de editar y las sugerencias. `useMap.ts` lleva el mapa a cada lugar nuevo. Sin esos servicios la app sigue con la ciudad configurada (ADR-22). |
 | ID-1, ID-2, ID-6, SEC-3 | Extensión NIP-07 o llave creada en el dispositivo; la llave local solo se guarda cifrada con NIP-49 (`ncryptsec`) y solo se exporta así. |
 | ID-3 | Sin llave la app es de solo lectura. |
 | SDK-5, SDK-8 | Las firmas se verifican y la prueba de trabajo se mina en Web Workers; mientras mina, el reporte se puede cancelar. |

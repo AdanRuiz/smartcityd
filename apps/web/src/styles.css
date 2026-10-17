@@ -125,3 +125,20 @@ label.check input { width: auto; }
 .notice p { margin: 0 0 0.4rem; }
 .pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
 .map.placing canvas { cursor: crosshair; }
+
+/* APP-14: city name with edit button and search with suggestions. */
+.city { display: inline-flex; align-items: center; gap: 0.3rem; position: relative; }
+.icon-button {
+  display: inline-flex; padding: 0.2rem; border: 0; border-radius: 4px;
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.icon-button:hover, .icon-button:focus-visible { color: var(--fg); background: var(--bg); }
+.city-edit input { font: inherit; padding: 0.15rem 0.4rem; width: 14rem; max-width: 60vw; }
+.suggestions {
+  position: absolute; top: calc(100% + 0.25rem); left: 0; z-index: 20; min-width: 16rem; max-width: 80vw;
+  margin: 0; padding: 0.25rem 0; list-style: none;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 12px rgb(0 0 0 / 0.15);
+}
+.suggestions li { display: flex; flex-direction: column; padding: 0.35rem 0.6rem; cursor: pointer; color: var(--fg); }
+.suggestions li.active { background: var(--bg); }
+.suggestions li small { font-size: 0.75rem; color: var(--muted); }

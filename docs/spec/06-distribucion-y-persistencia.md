@@ -72,6 +72,17 @@ Como es direccionable, solo existe la versión vigente por canal; el historial d
 | APP-10 | La pantalla "Acerca de" muestra versión, commit, hash del build y un botón "Guardar copia de esta app" que descarga `smartcity.html`. |
 | APP-11 | Los datos locales (IndexedDB) pertenecen al origen: cambian entre espejos y entre `file://` y `https://`. La app ofrece exportar e importar llave y ajustes. |
 
+### Ciudad y ubicación
+
+La app muestra el mapa donde está el usuario y le deja ir a cualquier ciudad. Los servicios que usa para ello (geolocalización por IP y búsqueda de lugares) son públicos, gratuitos y sin llave, se configuran en el build y son opcionales: si fallan o se desactivan, la app sigue con la ciudad configurada (ADR-22).
+
+| ID | Regla |
+|---|---|
+| APP-12 | Al abrir, sin una elección guardada, la app ubica la ciudad aproximada del usuario por su IP y lleva el mapa allí. La consulta va del navegador al servicio, nunca a un backend propio, y el resultado no se publica en ningún evento. |
+| APP-13 | Después pide la ubicación del navegador (con el permiso del usuario) y, si la obtiene, la usa en lugar de la de IP. Si el usuario niega el permiso, se queda la de IP. |
+| APP-14 | A la derecha del nombre de la ciudad hay un botón de editar. Al pulsarlo, el nombre se vuelve un campo de texto con el nombre actual seleccionado; al escribir (dos letras o más) aparecen sugerencias de ciudades con el nombre y, debajo y en letra más pequeña, estado o región y país. Escape o salir del campo cancela. |
+| APP-15 | Elegir una sugerencia lleva el mapa a esa ciudad y la guarda en el origen (APP-11); con una elección guardada la app no vuelve a ubicar al usuario. Mover el mapa no cambia la ciudad de los datos (tag `c`), que sigue siendo la configurada en el build. |
+
 Un fork solo necesita cambiar las llaves de desarrollador embebidas: los datos son los mismos porque viven en los relays, no en la app.
 
 ## Persistencia de los datos: snapshots
