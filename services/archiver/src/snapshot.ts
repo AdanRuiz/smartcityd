@@ -1,7 +1,9 @@
-import { access, mkdir, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { isCityId, utcDayRange } from '@smartcity/schemas'
-import { GRACE_SECONDS, buildDaily, type DailySnapshot } from './daily.js'
+import { gunzipSync } from 'node:zlib'
+import { NOSTR_KIND, isCityId, utcDayRange } from '@smartcity/schemas'
+import { GRACE_SECONDS, buildAddendum, buildDaily, type DailySnapshot } from './daily.js'
 import { fetchDay, fetchDeletions, wsUrl, type Fetch } from './relays.js'
 
 export interface SnapshotOptions {
@@ -27,32 +29,37 @@ export interface SnapshotResult {
   failed: { relay: string; reason: string }[]
 }
 
-/**
- * `archiver snapshot --city <c> --day <YYYY-MM-DD> --relay <url>…` (docs/spec/06): joins the day of every relay
- * (SNAP-5), applies the deletions they know (SNAP-3) and writes the daily file and the `snapshot` event to sign.
- * Relays are read at the same time; one that fails is reported and skipped, since none is mandatory; with none
- * readable nothing is written. Files already there are never overwritten (SNAP-2): late events go to an addendum.
- */
-export async function runSnapshot(options: SnapshotOptions, deps: SnapshotDeps): Promise<SnapshotResult> {
+export interface AddendumResult extends Omit<SnapshotResult, 'files'> {
+  /** Null when the relays had nothing the published files lack: no addendum is written. */
+  files: { archive: string; event: string } | null
+}
+
+/** Paths of a day's file and of its `snapshot` event: the daily with `n` 0, addendum `n` otherwise (SNAP-2). */
+function paths(out: string, city: string, day: string, n: number): { archive: string; event: string } {
+  const base = join(out, n === 0 ? `sc_${city}_${day}` : `sc_${city}_${day}_a${n}`)
+  return { archive: `${base}.ndjson.gz`, event: `${base}.snapshot.json` }
+}
+
+function checkOptions(options: SnapshotOptions, now: number): { from: number; to: number } {
   if (!isCityId(options.city)) throw new Error(`--city must be a city id: ${options.city}`)
   const range = utcDayRange(options.day)
   if (!range) throw new Error(`--day must be a UTC date YYYY-MM-DD: ${options.day}`)
   if (options.relays.length === 0) throw new Error('at least one --relay is needed (SNAP-5)')
   // Checked again by buildDaily; here it saves asking the relays for a day that cannot be archived yet.
-  if (deps.now < range.to + GRACE_SECONDS) throw new Error(`${options.day} is still in the 48 h grace period (SNAP-1)`)
+  if (now < range.to + GRACE_SECONDS) throw new Error(`${options.day} is still in the 48 h grace period (SNAP-1)`)
+  return range
+}
 
-  const archive = join(options.out, `sc_${options.city}_${options.day}.ndjson.gz`)
-  const event = join(options.out, `sc_${options.city}_${options.day}.snapshot.json`)
-  // Checked before asking the relays; the writes use `wx` as well, in case another run gets there first.
-  for (const path of [archive, event]) {
-    if (await exists(path)) throw new Error(`${path} already exists: published files are not rewritten (SNAP-2)`)
-  }
-
+/**
+ * Reads the day and the known deletions of every relay at the same time (SNAP-5, SNAP-3). One that fails is
+ * reported and skipped, since none is mandatory; with none readable it throws.
+ */
+async function readRelays(options: SnapshotOptions, since: number, deps: SnapshotDeps) {
   const results = await Promise.allSettled(
     options.relays.map(async (relay) => {
       const [day, known] = await Promise.all([
         fetchDay(deps.fetch, relay, options.city, options.day),
-        fetchDeletions(deps.fetch, relay, range.from, deps.log),
+        fetchDeletions(deps.fetch, relay, since, deps.log),
       ])
       deps.log(`${relay}: ${day.length} events, ${known.length} deletions`)
       return { day, known }
@@ -75,18 +82,111 @@ export async function runSnapshot(options: SnapshotOptions, deps: SnapshotDeps):
     }
   })
   if (read.length === 0) throw new Error('no relay could be read')
+  return { events, deletions, read, failed }
+}
 
-  const snapshot = buildDaily({ city: options.city, day: options.day, events, deletions, relays: read, now: deps.now })
-  for (const { id, reason } of snapshot.discarded) deps.log(`discarded ${id}: ${reason}`)
-
-  await mkdir(options.out, { recursive: true })
-  await writeFile(archive, snapshot.gzip, { flag: 'wx' })
-  await writeFile(event, JSON.stringify(snapshot.template, null, 2) + '\n', { flag: 'wx' })
-  deps.log(
+async function write(files: { archive: string; event: string }, snapshot: DailySnapshot, out: string, log: (line: string) => void) {
+  await mkdir(out, { recursive: true })
+  await writeFile(files.archive, snapshot.gzip, { flag: 'wx' })
+  await writeFile(files.event, JSON.stringify(snapshot.template, null, 2) + '\n', { flag: 'wx' })
+  log(
     `${snapshot.name}: ${snapshot.content.count} events, ${snapshot.deleted} deleted, ` +
       `${snapshot.discarded.length} discarded, x=${snapshot.content.x}`,
   )
-  return { snapshot, files: { archive, event }, failed }
+}
+
+/**
+ * `archiver snapshot --city <c> --day <YYYY-MM-DD> --relay <url>…` (docs/spec/06): joins the day of every relay
+ * (SNAP-5), applies the deletions they know (SNAP-3) and writes the daily file and the `snapshot` event to sign.
+ * Relays are read at the same time; one that fails is reported and skipped, since none is mandatory; with none
+ * readable nothing is written. Files already there are never overwritten (SNAP-2): late events go to an addendum.
+ */
+export async function runSnapshot(options: SnapshotOptions, deps: SnapshotDeps): Promise<SnapshotResult> {
+  const range = checkOptions(options, deps.now)
+  const files = paths(options.out, options.city, options.day, 0)
+  // Checked before asking the relays; the writes use `wx` as well, in case another run gets there first.
+  for (const path of [files.archive, files.event]) {
+    if (await exists(path)) throw new Error(`${path} already exists: published files are not rewritten (SNAP-2)`)
+  }
+
+  const { events, deletions, read, failed } = await readRelays(options, range.from, deps)
+  const snapshot = buildDaily({ city: options.city, day: options.day, events, deletions, relays: read, now: deps.now })
+  for (const { id, reason } of snapshot.discarded) deps.log(`discarded ${id}: ${reason}`)
+  await write(files, snapshot, options.out, deps.log)
+  return { snapshot, files, failed }
+}
+
+/**
+ * `archiver addendum --city <c> --day <YYYY-MM-DD> --relay <url>…` (SNAP-2): for a day whose daily file is already
+ * in `--out`, reads the relays again and writes `sc_<city>_<day>_a<N>.ndjson.gz` and its `snapshot` event with the
+ * valid events that neither the daily nor the earlier addenda have. Published files are checked against their
+ * `x` and never rewritten. With nothing new, nothing is written.
+ */
+export async function runAddendum(options: SnapshotOptions, deps: SnapshotDeps): Promise<AddendumResult> {
+  const range = checkOptions(options, deps.now)
+  if (!(await exists(paths(options.out, options.city, options.day, 0).archive))) {
+    throw new Error(`no daily file of ${options.day} in ${options.out}: run archiver snapshot first (SNAP-2)`)
+  }
+  const archived = new Set<string>()
+  // Deletions already archived keep applying even if the relay that knew them is no longer read (SNAP-3).
+  const archivedDeletions: unknown[] = []
+  let n = 0
+  for (;;) {
+    const files = paths(options.out, options.city, options.day, n)
+    if (n > 0 && !(await exists(files.archive))) break
+    for (const event of await readPublished(files)) {
+      archived.add(event.id)
+      if (event.kind === NOSTR_KIND.DELETION) archivedDeletions.push(event)
+    }
+    n++
+  }
+  const files = paths(options.out, options.city, options.day, n)
+  if (await exists(files.event)) throw new Error(`${files.event} already exists: published files are not rewritten (SNAP-2)`)
+
+  const { events, deletions, read, failed } = await readRelays(options, range.from, deps)
+  const snapshot = buildAddendum({
+    city: options.city,
+    day: options.day,
+    events,
+    deletions: [...archivedDeletions, ...deletions],
+    relays: read,
+    now: deps.now,
+    archived,
+    n,
+  })
+  for (const { id, reason } of snapshot.discarded) deps.log(`discarded ${id}: ${reason}`)
+  if (snapshot.content.count === 0) {
+    deps.log(`${options.day}: nothing new since the published files (${snapshot.archived} already archived)`)
+    return { snapshot, files: null, failed }
+  }
+  await write(files, snapshot, options.out, deps.log)
+  return { snapshot, files, failed }
+}
+
+const sha256 = (data: string | Uint8Array) => createHash('sha256').update(data).digest('hex')
+
+/**
+ * Lines of a published file, after checking it against the `x` and `file.x` of its `snapshot` event (SNAP-6):
+ * an addendum built on a damaged file would repeat or miss events, so a mismatch stops the run.
+ */
+async function readPublished(files: { archive: string; event: string }): Promise<{ id: string; kind: number }[]> {
+  const gzip = await readFile(files.archive)
+  let expected: { x?: unknown; file?: { x?: unknown } }
+  try {
+    const event = JSON.parse(await readFile(files.event, 'utf8')) as { content: string }
+    expected = JSON.parse(event.content) as typeof expected
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    throw new Error(`${files.event}: cannot read the snapshot event (${reason})`, { cause: error })
+  }
+  const ndjson = gunzipSync(gzip).toString('utf8')
+  if (sha256(gzip) !== expected.file?.x || sha256(ndjson) !== expected.x) {
+    throw new Error(`${files.archive} does not match the x of ${files.event}`)
+  }
+  return ndjson
+    .split('\n')
+    .filter((line) => line !== '')
+    .map((line) => JSON.parse(line) as { id: string; kind: number })
 }
 
 async function exists(path: string): Promise<boolean> {
