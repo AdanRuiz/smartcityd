@@ -204,7 +204,7 @@ const sha256 = (data: string | Uint8Array) => createHash('sha256').update(data).
  * Lines of a published file, after checking it against the `x` and `file.x` of its `snapshot` event (SNAP-6):
  * an addendum built on a damaged file would repeat or miss events, so a mismatch stops the run.
  */
-async function readPublished(files: { archive: string; event: string }): Promise<{ id: string; kind: number }[]> {
+export async function readPublished(files: { archive: string; event: string }): Promise<{ id: string; kind: number }[]> {
   const gzip = await readFile(files.archive)
   let expected: { x?: unknown; file?: { x?: unknown } }
   try {
@@ -224,7 +224,7 @@ async function readPublished(files: { archive: string; event: string }): Promise
     .map((line) => JSON.parse(line) as { id: string; kind: number })
 }
 
-async function exists(path: string): Promise<boolean> {
+export async function exists(path: string): Promise<boolean> {
   try {
     await access(path)
     return true
