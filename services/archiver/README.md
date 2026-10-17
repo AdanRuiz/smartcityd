@@ -2,7 +2,7 @@
 
 CLI de snapshots. Especificación: [`docs/spec/06-distribucion-y-persistencia.md`](../../docs/spec/06-distribucion-y-persistencia.md).
 
-Estado (fase 4): arma el archivo diario, sus adendas y el evento `snapshot` sin firmar de cada uno (SNAP-1, SNAP-2, SNAP-3, SNAP-5), el `.torrent` de cada archivo con sus web seeds y su CID de IPFS, con `cid`, `magnet` y `urls` ya en el evento (DIST-1 a DIST-3), y firma y publica ese evento con la llave del archivista (DIST-2). Pendientes según `09-roadmap.md`: subir el archivo a los web seeds, fijarlo en IPFS y el sello OpenTimestamps con `--verify` (SNAP-7).
+Estado (fase 4): arma el archivo diario, sus adendas y el evento `snapshot` sin firmar de cada uno (SNAP-1, SNAP-2, SNAP-3, SNAP-5), el `.torrent` de cada archivo con sus web seeds y su CID de IPFS, con `cid`, `magnet` y `urls` ya en el evento (DIST-1 a DIST-3), firma y publica ese evento con la llave del archivista (DIST-2) y sella su `id` en los calendarios de OpenTimestamps (paso 1 de "Sello de tiempo"). Pendientes según `09-roadmap.md`: subir el archivo a los web seeds, fijarlo en IPFS, publicar la prueba como kind 1040 (NIP-03), completarla cuando confirme Bitcoin y verificarla con `--verify` (SNAP-7).
 
 Corre en la máquina del archivista o en CI, no en un Worker. Depende solo de `@smartcity/schemas`, `nostr-tools` y Node. Agregar una dependencia externa cambia `pnpm-lock.yaml`, y eso lo hace una persona, no el agente (`docs/operacion/agente.md`).
 
@@ -62,6 +62,19 @@ O en el mismo paso que genera el archivo: `archiver snapshot … --publish --key
 - Antes de firmar comprueba el `.ndjson.gz` contra el `x` y el `file.x` del evento (SNAP-6); si no coinciden, no firma.
 - Firma una sola vez: guarda `sc_<city>_<día>[_a<N>].snapshot.signed.json` y, en ejecuciones siguientes, reenvía ese mismo evento sin pedir la llave. Volver a firmar daría otro `id`, y el sello OTS y los relays que ya lo tienen se refieren al primero.
 - Envía el evento a todos los relays a la vez con `POST /v1/events`. Un relay que lo rechaza o no responde se reporta; sale con código 1 solo si ninguno lo aceptó, y se puede repetir más tarde.
+
+## `archiver stamp`
+
+```sh
+node dist/cli.js stamp snapshots/sc_mx-gdl_2026-10-09.snapshot.signed.json
+```
+
+- Sella el `id` del evento `snapshot` ya firmado; como el `id` compromete a `x`, la prueba cubre todos los eventos del archivo (docs/spec/06, "Sello de tiempo").
+- Como el cliente de referencia (`ots stamp`), añade un nonce aleatorio y hace SHA-256 antes de enviar, así los calendarios no ven el `id`. Envía ese digest a todos los calendarios a la vez (`POST /digest`) y une sus respuestas en un solo `sc_<city>_<día>[_a<N>].snapshot.ots`, el formato `.ots` estándar con SHA-256 del `id` como digest del archivo (NIP-03). Sin dependencias: el formato está en `src/ots.ts`.
+- `--calendar <url>` (repetible) reemplaza los calendarios por defecto (`DEFAULT_CALENDARS` en `src/stamp.ts`: los cuatro del cliente de referencia, de tres operadores). Un calendario que falla o responde algo que no es una prueba válida se reporta; sale con código 1 solo si ninguno respondió, y no escribe nada.
+- La prueba queda pendiente hasta que la transacción del calendario confirme (horas). Nunca sobrescribe un `.ots` que ya existe; volver a correrlo solo lo reporta.
+
+Todavía no publica la prueba como kind 1040, no la completa con el bloque de Bitcoin ni la verifica (`--verify`, SNAP-7).
 
 ## Desarrollo
 
