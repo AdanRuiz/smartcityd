@@ -1,4 +1,4 @@
-import { ANY_CITY, NOSTR_KIND, SECONDS_PER_DAY, kindClass, parseAddress, tagValues, isHex64 } from '@smartcity/schemas'
+import { ANY_CITY, NOSTR_KIND, SECONDS_PER_DAY, deletionTargets, kindClass } from '@smartcity/schemas'
 import { addressD, eventCity, expiration, wins, type NostrEvent } from './event.js'
 import { INDEXED_TAGS, MAX_LIMIT, isEmptyFilter, type Filter } from './filter.js'
 
@@ -183,7 +183,8 @@ export class Store {
   // DATA-8 / NIP-09: only the author's own events, never other deletions, addresses up to the request's date.
   private deletionTargets(deletion: NostrEvent): DbStatement[] {
     const statements: DbStatement[] = []
-    for (const id of tagValues(deletion.tags, 'e').filter(isHex64)) {
+    const { ids, addresses } = deletionTargets(deletion)
+    for (const id of ids) {
       const owned = 'SELECT id FROM events WHERE id = ? AND pubkey = ? AND kind <> ?'
       const args = [id, deletion.pubkey, NOSTR_KIND.DELETION]
       statements.push(
@@ -191,11 +192,9 @@ export class Store {
         this.db.prepare(`DELETE FROM events WHERE id IN (${owned})`).bind(...args),
       )
     }
-    for (const value of tagValues(deletion.tags, 'a')) {
-      const address = parseAddress(value)
-      if (!address || address.pubkey !== deletion.pubkey) continue
+    for (const address of addresses) {
       const owned = 'SELECT id FROM events WHERE kind = ? AND pubkey = ? AND d = ? AND created_at <= ?'
-      const args = [address.kind, address.pubkey, address.d, deletion.created_at]
+      const args = [address.kind, address.pubkey, address.d, address.until]
       statements.push(
         this.db.prepare(`DELETE FROM tags WHERE event_id IN (${owned})`).bind(...args),
         this.db.prepare(`DELETE FROM events WHERE id IN (${owned})`).bind(...args),
