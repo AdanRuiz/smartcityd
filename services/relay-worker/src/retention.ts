@@ -42,7 +42,11 @@ export interface RetentionReport {
   /** Days old enough to purge that RELAY-4 kept, with the reason. */
   keptDays: { city: string; day: number; reason: string }[]
   purgedRows: number
+  /** Why purging by age did not run at all, when it did not. */
+  ageSkipped?: string
 }
+
+export const NO_ANCHORS = 'no TRUST_ANCHORS: purging by age is disabled (RELAY-4, ADR-20)'
 
 /** Parses a stored snapshot event; null if it does not describe an events file. */
 function snapshotFile(event: NostrEvent): SnapshotFile | null {
@@ -86,20 +90,25 @@ export function webSeeds(magnet: string, fileName: string): string[] {
  * `RETENTION_DAYS`, purges a day only when it is archived (RELAY-4):
  *
  * 1. a `daily` or `monthly` snapshot of the city covers it, signed by a key with role `archiver` from
- *    `TRUST_ANCHORS` (any key when there are no anchors);
+ *    `TRUST_ANCHORS`;
  * 2. its file is obtainable: a HEAD to one of its `urls` or web seeds answers with `Content-Length` equal to
  *    `file.size`;
  * 3. its `count`, plus those of the obtainable addenda of the same archiver and range, is at least the number of
  *    events the relay holds in that range.
  *
  * Deletions, OpenTimestamps proofs, snapshots and addressable events are never purged. `RETENTION_DAYS=0`
- * disables purging by age.
+ * disables purging by age, and so does an empty `TRUST_ANCHORS` (ADR-20): without anchors anyone could sign a
+ * snapshot that covers a day and have its real events deleted.
  */
 export async function runRetention(deps: RetentionDeps): Promise<RetentionReport> {
   const { store, config, now } = deps
   const report: RetentionReport = { expiredRows: 0, purgedDays: [], keptDays: [], purgedRows: 0 }
   report.expiredRows = await store.deleteExpired(now)
   if (config.retentionDays === 0) return report
+  if (config.trustAnchors.length === 0) {
+    report.ageSkipped = NO_ANCHORS
+    return report
+  }
 
   const cutoff = now - config.retentionDays * SECONDS_PER_DAY
   // Whole days only: the day must end before the cutoff.
@@ -125,16 +134,14 @@ async function archived(
   deps: RetentionDeps,
   probes: Prober,
 ): Promise<string | null> {
-  const { store, config, roles, now } = deps
+  const { store, roles, now } = deps
   // Snapshots are published after the day they cover (SNAP-1).
   const events = await store.query({ kinds: [KIND.SNAPSHOT], since: day.from, tags: { c: [city] } }, now)
   const files: SnapshotFile[] = []
   for (const event of events) {
     const file = snapshotFile(event)
     if (!file) continue
-    if (config.trustAnchors.length > 0 && !(await roles.rolesOf(file.pubkey, city, store, now)).has('archiver')) {
-      continue
-    }
+    if (!(await roles.rolesOf(file.pubkey, city, store, now)).has('archiver')) continue
     files.push(file)
   }
   const covering = files.filter((f) => COVERING.has(f.type) && f.from <= day.from && f.to >= day.to)

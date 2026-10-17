@@ -123,11 +123,11 @@ Tarea programada (Cron Trigger) diaria:
 
 RELAY-4: Un relay no elimina por antigüedad datos que no estén archivados. Un día cuenta como archivado cuando se cumplen las tres condiciones:
 
-1. existe un evento `snapshot` que lo cubre, firmado por una llave con rol `archiver` según `TRUST_ANCHORS` (o por cualquier llave si no hay anclas configuradas);
+1. existe un evento `snapshot` que lo cubre, firmado por una llave con rol `archiver` según `TRUST_ANCHORS`;
 2. el relay comprobó que el archivo se puede obtener: al menos una de sus `urls` o web seeds responde y el tamaño coincide con `file.size`;
 3. el `count` del snapshot (sumando sus adendas) es mayor o igual al número de eventos que el relay tiene de ese día. Si es menor, al relay le quedan eventos que el archivista no vio, y no purga.
 
-Un anuncio de snapshot sin archivo descargable no autoriza a borrar nada. Si el almacenamiento se llena antes de poder purgar, el relay rechaza escrituras nuevas (`restricted: storage full`) en lugar de borrar datos sin archivar.
+Sin `TRUST_ANCHORS` configuradas ningún día cuenta como archivado: el relay no purga por antigüedad y solo borra los eventos vencidos (NIP-40), y deja en el log el motivo (ADR-20). Un anuncio de snapshot sin archivo descargable no autoriza a borrar nada. Si el almacenamiento se llena antes de poder purgar, el relay rechaza escrituras nuevas (`restricted: storage full`) en lugar de borrar datos sin archivar.
 
 ## Configuración
 
@@ -138,10 +138,10 @@ Variables de `wrangler.toml`:
 | `RELAY_NAME`, `RELAY_CONTACT` | — | Para NIP-11 |
 | `CITIES` | `*` | Ciudades aceptadas, separadas por coma |
 | `WRITE_POLICY` | `open` | `open` \| `roles` (solo llaves con rol de un ancla) |
-| `TRUST_ANCHORS` | — | Pubkeys ancla, para `roles` y para exigir PoW solo a desconocidos |
+| `TRUST_ANCHORS` | — | Pubkeys ancla, para `roles`, para exigir PoW solo a desconocidos y para reconocer archivistas; sin anclas no hay purga por antigüedad (RELAY-4) |
 | `POW_BITS_REPORT` | `16` | Dificultad para `report` de llaves sin rol; `0` desactiva |
 | `RATE_EVENTS_PER_MIN` | `60` | Por pubkey |
-| `RETENTION_DAYS` | `90` | |
+| `RETENTION_DAYS` | `90` | Solo tiene efecto con `TRUST_ANCHORS` (RELAY-4); `0` desactiva la purga por antigüedad |
 | `MAX_EVENT_AGE_DAYS` | `30` | Antigüedad máxima de eventos regulares de clientes (RELAY-5); `0` desactiva |
 | `MIRROR_FROM` | — | Relays de los que este espeja (suscripción saliente desde el cron) |
 
