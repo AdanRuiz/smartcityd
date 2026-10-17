@@ -1,4 +1,4 @@
-import { ANY_CITY, GEOHASH_PRECISIONS, KIND, RELEASE_CHANNELS, ROLES, SNAPSHOT_TYPES, type SystemKind } from './kinds.js'
+import { ANY_CITY, GEOHASH_PRECISIONS, KIND, NOSTR_KIND, RELEASE_CHANNELS, ROLES, SNAPSHOT_TYPES, type SystemKind } from './kinds.js'
 
 const HEX64 = /^[0-9a-f]{64}$/
 const CITY_ID = /^[a-z]{2}-[a-z0-9-]+$/
@@ -171,12 +171,20 @@ export function deletionTargets(deletion: {
   return { ids, addresses }
 }
 
+const EXPIRATION = /^[1-9][0-9]*$/
+
 /**
- * NIP-40 expiration of an event (first `expiration` tag, a positive safe integer of seconds), or null. One
- * definition for the relay, which deletes the event when it passes, and the archiver, which never archives an
- * event that carries one (SNAP-16).
+ * NIP-40 expiration of an event in seconds, or null (SNAP-16). One definition for the relay, which deletes the
+ * event when it passes, and the archiver, which never archives an event that has one:
+ * - only the first `expiration` tag counts;
+ * - its value must be written as a positive decimal integer (no sign, exponent, spaces or leading zeros) and be a
+ *   safe integer, so every implementation reads the same values;
+ * - a kind 5 deletion never expires: it must stay, and be archived, as long as the event it deletes (DATA-8).
  */
-export function expirationOf(tags: readonly (readonly string[])[]): number | null {
-  const value = Number(tagValues(tags, 'expiration')[0])
-  return Number.isSafeInteger(value) && value > 0 ? value : null
+export function expirationOf(event: { kind: number; tags: readonly (readonly string[])[] }): number | null {
+  if (event.kind === NOSTR_KIND.DELETION) return null
+  const raw = tagValues(event.tags, 'expiration')[0]
+  if (raw === undefined || !EXPIRATION.test(raw)) return null
+  const value = Number(raw)
+  return Number.isSafeInteger(value) ? value : null
 }

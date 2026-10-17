@@ -106,7 +106,7 @@ function rejection(event: unknown, city: string, range: { from: number; to: numb
   if (event.created_at < range.from || event.created_at >= range.to) return 'created_at outside the day'
   // SNAP-16 (ADR-21): an author who sets a NIP-40 expiration marks the event as temporary, and a snapshot is
   // permanent, so it is left out whatever the date. Also keeps the file independent of when it is generated.
-  if (expirationOf(event.tags) !== null) return 'has NIP-40 expiration (SNAP-16)'
+  if (expirationOf(event) !== null) return 'has NIP-40 expiration (SNAP-16)'
   if (isSystemKind(event.kind)) {
     const result = validateEvent(event)
     if (!result.ok) return result.errors.join('; ')

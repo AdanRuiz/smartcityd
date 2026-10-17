@@ -117,8 +117,8 @@ Todas las respuestas llevan `Access-Control-Allow-Origin: *`: la app corre desde
 
 Tarea programada (Cron Trigger) diaria:
 
-- borra eventos con `expires_at` vencido;
-- borra regulares más antiguos que `RETENTION_DAYS` (por defecto 90) **solo si** ese día está archivado y el archivo es obtenible (RELAY-4); los que llevan `expiration` no se borran por antigüedad, porque ningún snapshot los contiene (SNAP-16): se van al vencer;
+- borra eventos con `expires_at` vencido; un borrado (kind 5) nunca caduca, aunque lleve `expiration` (SNAP-16);
+- borra regulares más antiguos que `RETENTION_DAYS` (por defecto 90) **solo si** ese día está archivado y el archivo es obtenible (RELAY-4); los que llevan `expiration` se borran junto con su día archivado aunque no hayan vencido: ningún snapshot los contiene (SNAP-16), pero el autor los marcó como temporales, y así una caducidad lejana no retiene espacio indefinidamente;
 - nunca borra direccionables vigentes ni kinds 5, 1040, 1482.
 
 RELAY-4: Un relay no elimina por antigüedad datos que no estén archivados. Un día cuenta como archivado cuando se cumplen las tres condiciones:

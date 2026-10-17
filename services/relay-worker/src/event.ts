@@ -1,4 +1,4 @@
-import { KIND, MAX_EVENT_BYTES, expirationOf, isHex64, kindClass, tagValues } from '@smartcity/schemas'
+import { KIND, MAX_EVENT_BYTES, isHex64, kindClass, tagValues } from '@smartcity/schemas'
 
 export interface NostrEvent {
   id: string
@@ -57,11 +57,6 @@ export function addressD(event: NostrEvent): string | null {
 export function eventCity(event: NostrEvent): string | null {
   if (event.kind === KIND.CITY) return tagValues(event.tags, 'd')[0] ?? null
   return tagValues(event.tags, 'c')[0] ?? null
-}
-
-/** NIP-40 `expiration` tag, in seconds; same definition the archiver uses (SNAP-16). */
-export function expiration(event: NostrEvent): number | null {
-  return expirationOf(event.tags)
 }
 
 /** DATA-3: the newest wins; on a tie, the lexicographically smaller id. */
