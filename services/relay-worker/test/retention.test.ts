@@ -95,6 +95,25 @@ describe('retention (docs/spec/07, "Retención", RELAY-4)', () => {
     expect(r.count('SELECT COUNT(*) AS n FROM tags WHERE kind = 1480')).toBe(4) // 1 observation × 4 indexed tags
   })
 
+  it('does not count an event with expiration, and purges it with its archived day (SNAP-16)', async () => {
+    const { r, sk, pk, run } = await setup()
+    // A far-off expiration must not hold space past retention.
+    const expiring = observation(sk, pk, DAY_START + 300, [['expiration', `${LATER + 365 * DAY}`]])
+    expect((await r.publish(expiring)).ok).toBe(true)
+    expect((await r.publish(snapshot(sk, 4))).ok).toBe(true) // same count as without it
+    const { report } = await run({ [URL_GZ]: SIZE })
+    expect(report.purgedDays).toEqual([{ city: CITY, day: DAY_START }])
+    expect(r.count(`SELECT COUNT(*) AS n FROM events WHERE id = '${expiring.id}'`)).toBe(0)
+  })
+
+  it('never expires a kind 5 deletion, even with an expiration tag (SNAP-16, DATA-8)', async () => {
+    const { r, sk, run } = await setup()
+    const del = deletion(sk, [['e', 'f'.repeat(64)], ['expiration', `${NOW + 1}`]], DAY_START)
+    expect((await r.publish(del)).ok).toBe(true)
+    await run({})
+    expect(r.count(`SELECT COUNT(*) AS n FROM events WHERE id = '${del.id}'`)).toBe(1)
+  })
+
   it('keeps a day without a covering snapshot', async () => {
     const { r, sk, run } = await setup()
     expect((await r.publish(snapshot(sk, 4, { from: DAY_START + DAY, to: DAY_START + 2 * DAY }))).ok).toBe(true)

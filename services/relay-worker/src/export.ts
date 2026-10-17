@@ -27,7 +27,6 @@ function decodeCursor(value: string): ExportPosition | null {
 export async function exportDay(
   store: Store,
   params: URLSearchParams,
-  now: number,
   page = EXPORT_PAGE,
 ): Promise<{ body: string } | { error: string }> {
   for (const name of params.keys()) {
@@ -43,7 +42,7 @@ export async function exportDay(
   if (cursor !== null && !after) return { error: 'invalid cursor' }
 
   // One extra row tells whether another page follows.
-  const events = await store.exportRange(city, range, after, page + 1, now)
+  const events = await store.exportRange(city, range, after, page + 1)
   const lines = events.slice(0, page).map((e) => canonicalLine(e) + '\n')
   const last = events[page - 1]
   if (events.length > page && last) lines.push(JSON.stringify({ cursor: encodeCursor(last) }) + '\n')

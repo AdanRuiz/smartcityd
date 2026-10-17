@@ -1,5 +1,5 @@
-import { ANY_CITY, NOSTR_KIND, SECONDS_PER_DAY, deletionTargets, kindClass } from '@smartcity/schemas'
-import { addressD, eventCity, expiration, wins, type NostrEvent } from './event.js'
+import { ANY_CITY, NOSTR_KIND, SECONDS_PER_DAY, deletionTargets, expirationOf, kindClass } from '@smartcity/schemas'
+import { addressD, eventCity, wins, type NostrEvent } from './event.js'
 import { INDEXED_TAGS, MAX_LIMIT, isEmptyFilter, type Filter } from './filter.js'
 
 // The subset of D1 the store uses. D1Database satisfies it; tests use node:sqlite behind the same shape.
@@ -168,7 +168,7 @@ export class Store {
         JSON.stringify(event.tags),
         event.content,
         event.sig,
-        expiration(event),
+        expirationOf(event),
         receivedAt,
       )
   }
@@ -251,24 +251,22 @@ export class Store {
 
   /**
    * Events of a city (`c` equal to it or to `*`) with `created_at` in `[from, to)`, regular and addressable
-   * only, in canonical order (docs/spec/06), strictly after `after`. `now` in seconds.
+   * only, in canonical order (docs/spec/06), strictly after `after`. Events with an `expiration` tag are left out,
+   * expired or not, as the archiver leaves them out of the daily file (SNAP-16).
    */
   async exportRange(
     city: string,
     range: { from: number; to: number },
     after: ExportPosition | null,
     limit: number,
-    now: number,
   ): Promise<NostrEvent[]> {
     const where = [
       'city IN (?, ?)',
       'created_at >= ?',
       'created_at < ?',
-      // Replaceable and ephemeral kinds are not archived (NIP-01 ranges, as in kindClass).
-      'NOT (kind IN (0, 3) OR (kind >= 10000 AND kind < 30000))',
-      '(expires_at IS NULL OR expires_at > ?)',
+      ARCHIVABLE_SQL,
     ]
-    const args: unknown[] = [city, ANY_CITY, range.from, range.to, now]
+    const args: unknown[] = [city, ANY_CITY, range.from, range.to]
     if (after) {
       where.push('(created_at > ? OR (created_at = ? AND id > ?))')
       args.push(after.created_at, after.created_at, after.id)
@@ -280,13 +278,13 @@ export class Store {
   }
 
   /** Number of events `exportRange` would return for the whole range: what a snapshot of it must count. */
-  async countRange(city: string, range: { from: number; to: number }, now: number): Promise<number> {
+  async countRange(city: string, range: { from: number; to: number }): Promise<number> {
     const row = await this.db
       .prepare(
         'SELECT COUNT(*) AS n FROM events WHERE city IN (?, ?) AND created_at >= ? AND created_at < ? ' +
-          'AND NOT (kind IN (0, 3) OR (kind >= 10000 AND kind < 30000)) AND (expires_at IS NULL OR expires_at > ?)',
+          `AND ${ARCHIVABLE_SQL}`,
       )
-      .bind(city, ANY_CITY, range.from, range.to, now)
+      .bind(city, ANY_CITY, range.from, range.to)
       .first<{ n: number }>()
     return Number(row?.n ?? 0)
   }
@@ -305,6 +303,8 @@ export class Store {
   /**
    * UTC days (start, in seconds) of a city that still hold purgeable events (regular, not in `keep`) entirely
    * before `before`. Events of `*` or without a city are never listed: no single city's snapshot accounts for them.
+   * Events with an `expiration` tag are purgeable too: no snapshot holds them (SNAP-16), but their author marked
+   * them as temporary, and keeping them past retention would let a far-off expiration hold space for good.
    */
   async purgeableDays(
     before: number,
@@ -343,6 +343,12 @@ export class Store {
 
 // Regular kinds (NIP-01 ranges, as in kindClass): neither replaceable, ephemeral nor addressable.
 const REGULAR_SQL = 'kind NOT IN (0, 3) AND kind < 10000'
+
+/**
+ * What goes into a daily file (docs/spec/06), shared by the export and by the count of RELAY-4 condition 3, which
+ * must agree: regular and addressable kinds (NIP-01 ranges, as in kindClass), without NIP-40 expiration (SNAP-16).
+ */
+const ARCHIVABLE_SQL = 'NOT (kind IN (0, 3) OR (kind >= 10000 AND kind < 30000)) AND expires_at IS NULL'
 
 /** Runs several filters (one REQ) and merges them: deduplicated by id, newest first. */
 export async function queryAll(store: Store, filters: Filter[], now: number): Promise<NostrEvent[]> {

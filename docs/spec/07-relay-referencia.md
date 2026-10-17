@@ -106,7 +106,7 @@ Traducción de filtro a SQL: `ids`, `authors`, `kinds`, `since`, `until` sobre `
 | `GET /` + `Accept: application/nostr+json` | Documento NIP-11: nombre, operador, NIPs soportados, límites, política, retención |
 | `POST /v1/events` | Publica un evento firmado. `200 {ok:true,id}` o `400 {ok:false,reason}` |
 | `GET /v1/events` | Consulta. Parámetros: `ids`, `authors`, `kinds`, `since`, `until`, `limit`, y una letra por tag (`c`, `a`, `g`, `e`, `p`, `t`). Valores múltiples separados por coma. Respuesta NDJSON |
-| `GET /v1/export?c=<city>&day=<YYYY-MM-DD>` | NDJSON canónico del día (formato de `06`), para archivistas. Paginado con `cursor` |
+| `GET /v1/export?c=<city>&day=<YYYY-MM-DD>` | NDJSON canónico del día (formato de `06`), para archivistas. Paginado con `cursor`. Excluye los eventos con `expiration`, vencidos o no (SNAP-16) |
 | `GET /v1/export?c=<city>&received_after=<cursor>` | Eventos en el orden en que el relay los recibió, a partir de un cursor opaco. La última línea es `{"cursor":"…"}` para continuar. Permite al archivista traer solo lo nuevo, incluidos los eventos tardíos, sin recorrer días anteriores |
 | `PUT /v1/blob` / `GET /v1/blob/<sha256>` | Opcional. Adjuntos en R2, direccionados por hash; requiere evento de autorización firmado |
 | `GET /health` | `200` con contadores básicos |
@@ -117,15 +117,15 @@ Todas las respuestas llevan `Access-Control-Allow-Origin: *`: la app corre desde
 
 Tarea programada (Cron Trigger) diaria:
 
-- borra eventos con `expires_at` vencido;
-- borra regulares más antiguos que `RETENTION_DAYS` (por defecto 90) **solo si** ese día está archivado y el archivo es obtenible (RELAY-4);
+- borra eventos con `expires_at` vencido; un borrado (kind 5) nunca caduca, aunque lleve `expiration` (SNAP-16);
+- borra regulares más antiguos que `RETENTION_DAYS` (por defecto 90) **solo si** ese día está archivado y el archivo es obtenible (RELAY-4); los que llevan `expiration` se borran junto con su día archivado aunque no hayan vencido: ningún snapshot los contiene (SNAP-16), pero el autor los marcó como temporales, y así una caducidad lejana no retiene espacio indefinidamente;
 - nunca borra direccionables vigentes ni kinds 5, 1040, 1482.
 
 RELAY-4: Un relay no elimina por antigüedad datos que no estén archivados. Un día cuenta como archivado cuando se cumplen las tres condiciones:
 
 1. existe un evento `snapshot` que lo cubre, firmado por una llave con rol `archiver` según `TRUST_ANCHORS`;
 2. el relay comprobó que el archivo se puede obtener: al menos una de sus `urls` o web seeds responde y el tamaño coincide con `file.size`;
-3. el `count` del snapshot (sumando sus adendas) es mayor o igual al número de eventos que el relay tiene de ese día. Si es menor, al relay le quedan eventos que el archivista no vio, y no purga.
+3. el `count` del snapshot (sumando sus adendas) es mayor o igual al número de eventos que el relay tiene de ese día, sin contar los que llevan `expiration` (SNAP-16). Si es menor, al relay le quedan eventos que el archivista no vio, y no purga.
 
 Sin `TRUST_ANCHORS` configuradas ningún día cuenta como archivado: el relay no purga por antigüedad y solo borra los eventos vencidos (NIP-40), y deja en el log el motivo (ADR-20). Un anuncio de snapshot sin archivo descargable no autoriza a borrar nada. Si el almacenamiento se llena antes de poder purgar, el relay rechaza escrituras nuevas (`restricted: storage full`) en lugar de borrar datos sin archivar.
 

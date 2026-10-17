@@ -55,7 +55,7 @@ export default {
     }
 
     if (url.pathname === '/v1/export' && request.method === 'GET') {
-      const result = await exportDay(new Store(env.DB), url.searchParams, seconds())
+      const result = await exportDay(new Store(env.DB), url.searchParams)
       if ('error' in result) return json({ ok: false, reason: result.error }, 400)
       return new Response(result.body, { headers: { ...CORS, 'Content-Type': 'application/x-ndjson' } })
     }

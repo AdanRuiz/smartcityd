@@ -43,7 +43,7 @@ Qué se construye primero en la v1 y qué se deja fuera. El **cuándo** está en
 | Offline: almacén local y cola de salida | 3 | GOAL-7, NFR-3, SDK-4 |
 | Reportes sin foto, `report_update`, llave desechable por reporte | 3 | PRIV-1 a PRIV-3, PRIV-5, PRIV-6 |
 | Confianza: roles, niveles `verified`/`community`/`flagged`, filtro por nivel, llaves `blocked` | 3 | TRUST-3 a TRUST-5, TRUST-7, TRUST-9, TRUST-10 |
-| Archivista: snapshot diario y adendas, torrent con web seeds e IPFS, evento `snapshot`, sello OpenTimestamps | 4 | SNAP-1 a SNAP-3, SNAP-5 a SNAP-7, DIST-1 a DIST-3 |
+| Archivista: snapshot diario y adendas, torrent con web seeds e IPFS, evento `snapshot`, sello OpenTimestamps | 4 | SNAP-1 a SNAP-3, SNAP-5 a SNAP-7, SNAP-16, DIST-1 a DIST-3 |
 | Relay: `GET /v1/export` por día, retención condicionada, importación de snapshots | 4 | RELAY-4, NFR-4, GOAL-2 |
 | App en archivo único, evento `release`, al menos dos espejos | 4 | APP-4, GOAL-3 |
 | Documentación pública suficiente para que un tercero integre sin tocar este repositorio | 5 | GOAL-1 |

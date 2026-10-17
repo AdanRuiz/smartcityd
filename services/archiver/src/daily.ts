@@ -8,6 +8,7 @@ import {
   SECONDS_PER_DAY,
   canonicalNdjson,
   deletionTargets,
+  expirationOf,
   isHex64,
   isSystemKind,
   kindClass,
@@ -94,15 +95,6 @@ function belongsTo(event: SignedEvent, city: string): boolean {
   return owner === city || owner === ANY_CITY
 }
 
-/**
- * NIP-40, judged at a fixed moment of the day (its end plus the grace period, the earliest it can be archived)
- * and not at generation time, so every archivist builds the same file whenever it runs.
- */
-function expired(event: SignedEvent, at: number): boolean {
-  const value = Number(tagValues(event.tags, 'expiration')[0])
-  return Number.isSafeInteger(value) && value > 0 && value <= at
-}
-
 /** Why an event cannot go into the day's file, or null if it can. */
 function rejection(event: unknown, city: string, range: { from: number; to: number }): string | null {
   if (!isEventShape(event)) return 'not a NIP-01 event'
@@ -112,7 +104,9 @@ function rejection(event: unknown, city: string, range: { from: number; to: numb
   if (cls !== 'regular' && cls !== 'addressable') return `${cls} events are not archived`
   if (!belongsTo(event, city)) return `not from city ${city}`
   if (event.created_at < range.from || event.created_at >= range.to) return 'created_at outside the day'
-  if (expired(event, range.to + GRACE_SECONDS)) return 'expired (NIP-40)'
+  // SNAP-16 (ADR-21): an author who sets a NIP-40 expiration marks the event as temporary, and a snapshot is
+  // permanent, so it is left out whatever the date. Also keeps the file independent of when it is generated.
+  if (expirationOf(event) !== null) return 'has NIP-40 expiration (SNAP-16)'
   if (isSystemKind(event.kind)) {
     const result = validateEvent(event)
     if (!result.ok) return result.errors.join('; ')

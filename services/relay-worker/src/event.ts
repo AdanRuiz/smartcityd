@@ -59,12 +59,6 @@ export function eventCity(event: NostrEvent): string | null {
   return tagValues(event.tags, 'c')[0] ?? null
 }
 
-/** NIP-40 `expiration` tag, in seconds. */
-export function expiration(event: NostrEvent): number | null {
-  const value = Number(tagValues(event.tags, 'expiration')[0])
-  return Number.isSafeInteger(value) && value > 0 ? value : null
-}
-
 /** DATA-3: the newest wins; on a tie, the lexicographically smaller id. */
 export function wins(candidate: { created_at: number; id: string }, current: { created_at: number; id: string }): boolean {
   if (candidate.created_at !== current.created_at) return candidate.created_at > current.created_at

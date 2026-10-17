@@ -26,6 +26,7 @@ async function populated() {
       obs: [{ ts: NOW, values: { pm25: 3 } }],
     }),
     observation(sk, pk, NOW + 2, [['expiration', `${NOW + 60}`]]), // expired at export time
+    observation(sk, pk, NOW + 4, [['expiration', `${NOW + 30 * 86_400}`]]), // not expired, still not archived (SNAP-16)
   ]
   const deleted = observation(sk, pk, NOW + 3)
   for (const event of [...inDay, ...outside, deleted]) expect((await r.publish(event)).ok).toBe(true)
@@ -38,7 +39,7 @@ const params = (values: Record<string, string>) => new URLSearchParams(values)
 describe('GET /v1/export by day (docs/spec/07)', () => {
   it('produces the canonical NDJSON of the day, with the sha256 the archiver computes (test 7)', async () => {
     const { r, inDay } = await populated()
-    const result = await exportDay(r.store, params({ c: CITY, day: DAY }), NOW + 61)
+    const result = await exportDay(r.store, params({ c: CITY, day: DAY }))
     if (!('body' in result)) throw new Error(result.error)
     const expected = canonicalNdjson(inDay)
     expect(result.body).toBe(expected)
@@ -53,7 +54,7 @@ describe('GET /v1/export by day (docs/spec/07)', () => {
     let pages = 0
     do {
       const query = params({ c: CITY, day: DAY, ...(cursor ? { cursor } : {}) })
-      const result = await exportDay(r.store, query, NOW + 61, 2)
+      const result = await exportDay(r.store, query, 2)
       if (!('body' in result)) throw new Error(result.error)
       const lines = result.body.trimEnd().split('\n')
       const last = JSON.parse(lines.at(-1)!) as { cursor?: string }
@@ -67,13 +68,13 @@ describe('GET /v1/export by day (docs/spec/07)', () => {
 
   it('returns an empty body for a day without events', async () => {
     const { r } = await populated()
-    expect(await exportDay(r.store, params({ c: CITY, day: '2025-10-11' }), NOW)).toEqual({ body: '' })
+    expect(await exportDay(r.store, params({ c: CITY, day: '2025-10-11' }))).toEqual({ body: '' })
   })
 
   it('rejects bad parameters', async () => {
     const { store } = relay()
     const error = async (values: Record<string, string>) => {
-      const result = await exportDay(store, params(values), NOW)
+      const result = await exportDay(store, params(values))
       return 'error' in result ? result.error : null
     }
     expect(await error({ day: DAY })).toBe('c must be a city id')
