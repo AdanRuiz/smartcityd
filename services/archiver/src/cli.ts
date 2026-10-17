@@ -24,11 +24,12 @@ async function main(argv: string[]): Promise<number> {
     console.error(USAGE)
     return 2
   }
-  const { failed } = await runSnapshot(
+  await runSnapshot(
     { city: values.city, day: values.day, relays: values.relay ?? [], out: values.out },
-    { fetch: (url) => fetch(url), now: Math.floor(Date.now() / 1000), log: (line) => console.error(line) },
+    { fetch: (url, init) => fetch(url, init), now: Math.floor(Date.now() / 1000), log: (line) => console.error(line) },
   )
-  return failed.length > 0 ? 1 : 0
+  // A relay that failed is already in the log; the snapshot was written, so the run succeeded.
+  return 0
 }
 
 main(process.argv.slice(2)).then(

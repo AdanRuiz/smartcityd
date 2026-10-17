@@ -7,10 +7,10 @@ import {
   NOSTR_KIND,
   SECONDS_PER_DAY,
   canonicalNdjson,
+  deletionTargets,
   isHex64,
   isSystemKind,
   kindClass,
-  parseAddress,
   tagValues,
   utcDayRange,
   validateContent,
@@ -30,10 +30,10 @@ export interface DailyInput {
   city: string
   /** UTC day `YYYY-MM-DD`. */
   day: string
-  /** Events of the day from every known relay, duplicates included (SNAP-5, DATA-6). */
-  events: readonly SignedEvent[]
-  /** Kind 5 deletion requests known when generating, from any day (SNAP-3). */
-  deletions: readonly SignedEvent[]
+  /** Events of the day from every known relay, duplicates included (SNAP-5, DATA-6). Unchecked relay data. */
+  events: readonly unknown[]
+  /** Kind 5 deletion requests known when generating, from any day (SNAP-3). Unchecked relay data. */
+  deletions: readonly unknown[]
   /** Relays the events came from, as `wss://` URLs, for the `relays` field. */
   relays: readonly string[]
   /** Seconds. */
@@ -57,12 +57,35 @@ export interface DailySnapshot {
 
 const sha256 = (data: string | Uint8Array) => createHash('sha256').update(data).digest('hex')
 
+/** Whether relay data has the shape of a NIP-01 event, so it can be verified without throwing. */
+export function isEventShape(value: unknown): value is SignedEvent {
+  if (typeof value !== 'object' || value === null) return false
+  const e = value as Record<string, unknown>
+  return (
+    isHex64(e.id) &&
+    isHex64(e.pubkey) &&
+    typeof e.sig === 'string' &&
+    typeof e.content === 'string' &&
+    Number.isSafeInteger(e.kind) &&
+    Number.isSafeInteger(e.created_at) &&
+    Array.isArray(e.tags) &&
+    e.tags.every((tag) => Array.isArray(tag) && tag.every((part) => typeof part === 'string'))
+  )
+}
+
 /**
  * Checks `id` and `sig` on a fresh copy of the seven fields: nostr-tools caches the result of `verifyEvent` on
- * the object, and an event built in this process would otherwise pass without being checked again.
+ * the object, and an event built in this process would otherwise pass without being checked again. Never throws:
+ * a line a relay got wrong is discarded, not fatal (SNAP-6).
  */
-function verifies({ id, pubkey, created_at, kind, tags, content, sig }: SignedEvent): boolean {
-  return verifyEvent({ id, pubkey, created_at, kind, tags, content, sig })
+function verifies(value: unknown): value is SignedEvent {
+  if (!isEventShape(value)) return false
+  const { id, pubkey, created_at, kind, tags, content, sig } = value
+  try {
+    return verifyEvent({ id, pubkey, created_at, kind, tags, content, sig })
+  } catch {
+    return false
+  }
 }
 
 /** The city an event belongs to (docs/spec/06, "Formato"): its `c` tag, or `d` for a `city`. */
@@ -71,20 +94,25 @@ function belongsTo(event: SignedEvent, city: string): boolean {
   return owner === city || owner === ANY_CITY
 }
 
-function expired(event: SignedEvent, now: number): boolean {
+/**
+ * NIP-40, judged at a fixed moment of the day (its end plus the grace period, the earliest it can be archived)
+ * and not at generation time, so every archivist builds the same file whenever it runs.
+ */
+function expired(event: SignedEvent, at: number): boolean {
   const value = Number(tagValues(event.tags, 'expiration')[0])
-  return Number.isSafeInteger(value) && value > 0 && value <= now
+  return Number.isSafeInteger(value) && value > 0 && value <= at
 }
 
 /** Why an event cannot go into the day's file, or null if it can. */
-function rejection(event: SignedEvent, city: string, range: { from: number; to: number }, now: number): string | null {
+function rejection(event: unknown, city: string, range: { from: number; to: number }): string | null {
+  if (!isEventShape(event)) return 'not a NIP-01 event'
   if (!verifies(event)) return 'invalid id or signature'
   if (!ALLOWED_KINDS.includes(event.kind)) return `kind ${event.kind} is not accepted`
   const cls = kindClass(event.kind)
   if (cls !== 'regular' && cls !== 'addressable') return `${cls} events are not archived`
   if (!belongsTo(event, city)) return `not from city ${city}`
   if (event.created_at < range.from || event.created_at >= range.to) return 'created_at outside the day'
-  if (expired(event, now)) return 'expired (NIP-40)'
+  if (expired(event, range.to + GRACE_SECONDS)) return 'expired (NIP-40)'
   if (isSystemKind(event.kind)) {
     const result = validateEvent(event)
     if (!result.ok) return result.errors.join('; ')
@@ -93,23 +121,23 @@ function rejection(event: SignedEvent, city: string, range: { from: number; to: 
 }
 
 /**
- * Tells whether a valid deletion of its author covers an event (DATA-8, NIP-09, as the relay applies it):
- * `e` tags by id, never another deletion; `a` tags by address, versions up to the deletion's date.
+ * Tells whether a valid deletion of its author covers an event (DATA-8, NIP-09), with the same targets the relay
+ * deletes (`deletionTargets`): `e` tags by id, never another deletion; `a` tags by address, versions up to the
+ * deletion's date.
  */
-export function deletionIndex(deletions: readonly SignedEvent[]): (event: SignedEvent) => boolean {
+export function deletionIndex(deletions: readonly unknown[]): (event: SignedEvent) => boolean {
   const ids = new Map<string, Set<string>>()
   const addresses = new Map<string, number>()
   for (const deletion of deletions) {
-    if (deletion.kind !== NOSTR_KIND.DELETION || !verifies(deletion)) continue
-    for (const id of tagValues(deletion.tags, 'e').filter(isHex64)) {
+    if (!verifies(deletion) || deletion.kind !== NOSTR_KIND.DELETION) continue
+    const targets = deletionTargets(deletion)
+    for (const id of targets.ids) {
       const authors = ids.get(id) ?? new Set<string>()
       ids.set(id, authors.add(deletion.pubkey))
     }
-    for (const value of tagValues(deletion.tags, 'a')) {
-      const address = parseAddress(value)
-      if (!address || address.pubkey !== deletion.pubkey) continue
-      const key = `${address.kind}:${address.pubkey}:${address.d}`
-      addresses.set(key, Math.max(addresses.get(key) ?? -Infinity, deletion.created_at))
+    for (const { kind, pubkey, d, until } of targets.addresses) {
+      const key = `${kind}:${pubkey}:${d}`
+      addresses.set(key, Math.max(addresses.get(key) ?? -Infinity, until))
     }
   }
   return (event) => {
@@ -137,17 +165,28 @@ export function buildDaily(input: DailyInput): DailySnapshot {
 
   const isDeleted = deletionIndex(input.deletions)
   const discarded: DailySnapshot['discarded'] = []
+  const reported = new Set<string>()
+  // Only copies that passed verification count as seen: a forged copy from one relay must not hide the good
+  // copy of the same id from another (SNAP-5).
   const seen = new Set<string>()
   const kept: SignedEvent[] = []
   let deleted = 0
   for (const event of input.events) {
-    if (seen.has(event.id)) continue
-    seen.add(event.id)
-    const reason = rejection(event, input.city, range, input.now)
-    if (reason) discarded.push({ id: event.id, reason })
-    else if (isDeleted(event)) deleted++
-    else kept.push(event)
+    const id = isEventShape(event) ? event.id : String((event as { id?: unknown } | null)?.id ?? '?')
+    if (seen.has(id)) continue
+    const reason = rejection(event, input.city, range)
+    if (reason) {
+      if (!reported.has(id)) discarded.push({ id, reason })
+      reported.add(id)
+      continue
+    }
+    const valid = event as SignedEvent
+    seen.add(id)
+    if (isDeleted(valid)) deleted++
+    else kept.push(valid)
   }
+  // An id first seen as a bad copy and later as a good one is not reported as discarded.
+  const discardedOut = discarded.filter((d) => !seen.has(d.id))
 
   const ndjson = canonicalNdjson(kept)
   const gzip = new Uint8Array(gzipSync(ndjson))
@@ -176,5 +215,5 @@ export function buildDaily(input: DailyInput): DailySnapshot {
     ],
     content: JSON.stringify(content),
   }
-  return { name, ndjson, gzip, content, template, discarded, deleted }
+  return { name, ndjson, gzip, content, template, discarded: discardedOut, deleted }
 }

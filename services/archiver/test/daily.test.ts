@@ -128,6 +128,35 @@ describe('daily file (docs/spec/06, "Formato")', () => {
     expect(daily.discarded.find((d) => d.id === forged.id)?.reason).toMatch(/signature/)
   })
 
+  it('keeps the good copy of an event when another relay served a forged one first (SNAP-5)', () => {
+    const { sk, pk } = key()
+    const good = observation(sk, pk, FROM + 1)
+    const forged = { ...good, content: '{"v":1,"obs":[]}' }
+    const daily = buildDaily({ city: CITY, day: DAY, events: [forged, good], deletions: [], relays: [], now: AFTER_GRACE })
+    expect(daily.ndjson).toBe(canonicalLine(good) + '\n')
+    expect(daily.discarded).toEqual([])
+  })
+
+  it('discards malformed relay lines instead of failing the whole run (SNAP-6)', () => {
+    const { sk, pk } = key()
+    const good = observation(sk, pk, FROM + 1)
+    const junk = [null, 7, 'x', { id: 1 }, { ...good, tags: 'c' }, { ...good, created_at: 'now' }]
+    const badDeletions = [null, { kind: 5, tags: [['e']] }]
+    const daily = buildDaily({ city: CITY, day: DAY, events: [...junk, good], deletions: badDeletions, relays: [], now: AFTER_GRACE })
+    expect(daily.ndjson).toBe(canonicalLine(good) + '\n')
+    expect(daily.discarded.length).toBeGreaterThan(0)
+  })
+
+  it('judges NIP-40 expiry at the end of the grace period, not at generation time', () => {
+    const { sk, pk } = key()
+    const later = observation(sk, pk, FROM + 1, [['expiration', String(AFTER_GRACE + 3600)]])
+    const input = { city: CITY, day: DAY, events: [later], deletions: [], relays: [] }
+    const early = buildDaily({ ...input, now: AFTER_GRACE })
+    const late = buildDaily({ ...input, now: AFTER_GRACE + 30 * 86_400 })
+    expect(late.content.x).toBe(early.content.x)
+    expect(early.content.count).toBe(1)
+  })
+
   it('omits events their author asked to delete, by id and by address (SNAP-3, DATA-8)', () => {
     const { sk, pk } = key()
     const other = key()
@@ -175,7 +204,7 @@ describe('reading relays (docs/spec/07)', () => {
     const { sk, pk } = key()
     const events = [0, 1, 2, 3, 4].map((i) => observation(sk, pk, FROM + i))
     const day = await fetchDay(relays({ 'https://a.example': events }), 'wss://a.example', CITY, DAY)
-    expect(canonicalNdjson(day)).toBe(canonicalNdjson(events))
+    expect(canonicalNdjson(day as SignedEvent[])).toBe(canonicalNdjson(events))
     expect(day).toHaveLength(5)
   })
 
@@ -184,7 +213,49 @@ describe('reading relays (docs/spec/07)', () => {
     const deletions = [0, 1, 2, 3, 4].map((i) => deletion(sk, [['e', 'a'.repeat(63) + i]], FROM + i))
     const fetch = relays({ 'https://a.example': deletions }, 2, 2)
     const found = await fetchDeletions(fetch, 'https://a.example', FROM)
-    expect(found.map((e) => e.id).sort()).toEqual(deletions.map((e) => e.id).sort())
+    expect((found as SignedEvent[]).map((e) => e.id).sort()).toEqual(deletions.map((e) => e.id).sort())
+  })
+})
+
+describe('reading relays, failure modes', () => {
+  it('fails a relay whose export cursor repeats instead of looping', async () => {
+    const fetch: Fetch = async () => new Response(JSON.stringify({ cursor: 'same' }) + '\n')
+    await expect(fetchDay(fetch, 'https://a.example', CITY, DAY)).rejects.toThrow(/repeats/)
+  })
+
+  it('passes a timeout signal to every request', async () => {
+    const signals: (AbortSignal | undefined)[] = []
+    const fetch: Fetch = async (_url, init) => (signals.push(init?.signal), new Response(''))
+    await fetchDay(fetch, 'https://a.example', CITY, DAY)
+    await fetchDeletions(fetch, 'https://a.example', FROM)
+    expect(signals).toHaveLength(2)
+    expect(signals.every((s) => s instanceof AbortSignal)).toBe(true)
+  })
+
+  it('pages past a full page of deletions that share one second', async () => {
+    const { sk } = key()
+    const sameSecond = [0, 1, 2].map((i) => deletion(sk, [['e', 'b'.repeat(63) + i]], FROM + 10))
+    const older = [0, 1].map((i) => deletion(sk, [['e', 'c'.repeat(63) + i]], FROM + i))
+    const warnings: string[] = []
+    const found = await fetchDeletions(relays({ 'https://a.example': [...sameSecond, ...older] }, 2, 2), 'https://a.example', FROM, (l) =>
+      warnings.push(l),
+    )
+    for (const e of older) expect(found.map((f) => (f as SignedEvent).id)).toContain(e.id)
+    expect(warnings.some((w) => w.includes(String(FROM + 10)))).toBe(true)
+  })
+
+  it('skips deletion lines without a numeric created_at', async () => {
+    const { sk } = key()
+    const good = deletion(sk, [['e', 'd'.repeat(64)]], FROM + 1)
+    const asked: string[] = []
+    const fetch: Fetch = async (url) => {
+      asked.push(url)
+      if (asked.length > 1) return new Response('')
+      return new Response(JSON.stringify({ id: 'x', created_at: 'later' }) + '\n' + JSON.stringify(good) + '\n')
+    }
+    const found = await fetchDeletions(fetch, 'https://a.example', FROM)
+    expect(found).toHaveLength(1)
+    expect(asked.every((u) => !u.includes('NaN'))).toBe(true)
   })
 })
 
@@ -216,6 +287,17 @@ describe('archiver snapshot', () => {
     expect(content.relays).toEqual(['wss://a.example', 'wss://b.example'])
     expect(result.failed.map((f) => f.relay)).toEqual(['wss://down.example'])
     expect(logs.some((l) => l.includes('down.example') && l.includes('skipped'))).toBe(true)
+  })
+
+  it('refuses to overwrite a published day (SNAP-2)', async () => {
+    const { sk, pk } = key()
+    const fetch = relays({ 'https://a.example': [observation(sk, pk, FROM + 1)] })
+    const out = await mkdtemp(join(tmpdir(), 'archiver-'))
+    const options = { city: CITY, day: DAY, relays: ['wss://a.example'], out }
+    const first = await runSnapshot(options, { fetch, now: AFTER_GRACE, log: () => {} })
+    const before = await readFile(first.files.archive)
+    await expect(runSnapshot(options, { fetch, now: AFTER_GRACE + 10, log: () => {} })).rejects.toThrow(/SNAP-2/)
+    expect(await readFile(first.files.archive)).toEqual(before)
   })
 
   it('does not ask the relays for a day inside the grace period (SNAP-1)', async () => {

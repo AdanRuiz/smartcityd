@@ -1,6 +1,6 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { access, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { isCityId, utcDayRange, type SignedEvent } from '@smartcity/schemas'
+import { isCityId, utcDayRange } from '@smartcity/schemas'
 import { GRACE_SECONDS, buildDaily, type DailySnapshot } from './daily.js'
 import { fetchDay, fetchDeletions, wsUrl, type Fetch } from './relays.js'
 
@@ -30,7 +30,8 @@ export interface SnapshotResult {
 /**
  * `archiver snapshot --city <c> --day <YYYY-MM-DD> --relay <url>…` (docs/spec/06): joins the day of every relay
  * (SNAP-5), applies the deletions they know (SNAP-3) and writes the daily file and the `snapshot` event to sign.
- * A relay that fails is reported and skipped, since none is mandatory; with none readable nothing is written.
+ * Relays are read at the same time; one that fails is reported and skipped, since none is mandatory; with none
+ * readable nothing is written. Files already there are never overwritten (SNAP-2): late events go to an addendum.
  */
 export async function runSnapshot(options: SnapshotOptions, deps: SnapshotDeps): Promise<SnapshotResult> {
   if (!isCityId(options.city)) throw new Error(`--city must be a city id: ${options.city}`)
@@ -40,37 +41,59 @@ export async function runSnapshot(options: SnapshotOptions, deps: SnapshotDeps):
   // Checked again by buildDaily; here it saves asking the relays for a day that cannot be archived yet.
   if (deps.now < range.to + GRACE_SECONDS) throw new Error(`${options.day} is still in the 48 h grace period (SNAP-1)`)
 
-  const events: SignedEvent[] = []
-  const deletions: SignedEvent[] = []
+  const archive = join(options.out, `sc_${options.city}_${options.day}.ndjson.gz`)
+  const event = join(options.out, `sc_${options.city}_${options.day}.snapshot.json`)
+  // Checked before asking the relays; the writes use `wx` as well, in case another run gets there first.
+  for (const path of [archive, event]) {
+    if (await exists(path)) throw new Error(`${path} already exists: published files are not rewritten (SNAP-2)`)
+  }
+
+  const results = await Promise.allSettled(
+    options.relays.map(async (relay) => {
+      const [day, known] = await Promise.all([
+        fetchDay(deps.fetch, relay, options.city, options.day),
+        fetchDeletions(deps.fetch, relay, range.from, deps.log),
+      ])
+      deps.log(`${relay}: ${day.length} events, ${known.length} deletions`)
+      return { day, known }
+    }),
+  )
+  const events: unknown[] = []
+  const deletions: unknown[] = []
   const read: string[] = []
   const failed: SnapshotResult['failed'] = []
-  for (const relay of options.relays) {
-    try {
-      const day = await fetchDay(deps.fetch, relay, options.city, options.day)
-      const known = await fetchDeletions(deps.fetch, relay, range.from)
-      events.push(...day)
-      deletions.push(...known)
+  results.forEach((result, i) => {
+    const relay = options.relays[i]!
+    if (result.status === 'fulfilled') {
+      events.push(...result.value.day)
+      deletions.push(...result.value.known)
       read.push(wsUrl(relay))
-      deps.log(`${relay}: ${day.length} events, ${known.length} deletions`)
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error)
+    } else {
+      const reason = result.reason instanceof Error ? result.reason.message : String(result.reason)
       failed.push({ relay, reason })
       deps.log(`${relay}: skipped (${reason})`)
     }
-  }
+  })
   if (read.length === 0) throw new Error('no relay could be read')
 
   const snapshot = buildDaily({ city: options.city, day: options.day, events, deletions, relays: read, now: deps.now })
   for (const { id, reason } of snapshot.discarded) deps.log(`discarded ${id}: ${reason}`)
 
   await mkdir(options.out, { recursive: true })
-  const archive = join(options.out, snapshot.name)
-  const event = join(options.out, snapshot.name.replace(/\.ndjson\.gz$/, '.snapshot.json'))
-  await writeFile(archive, snapshot.gzip)
-  await writeFile(event, JSON.stringify(snapshot.template, null, 2) + '\n')
+  await writeFile(archive, snapshot.gzip, { flag: 'wx' })
+  await writeFile(event, JSON.stringify(snapshot.template, null, 2) + '\n', { flag: 'wx' })
   deps.log(
     `${snapshot.name}: ${snapshot.content.count} events, ${snapshot.deleted} deleted, ` +
       `${snapshot.discarded.length} discarded, x=${snapshot.content.x}`,
   )
   return { snapshot, files: { archive, event }, failed }
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
 }

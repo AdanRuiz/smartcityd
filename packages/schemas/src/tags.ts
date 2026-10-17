@@ -144,3 +144,29 @@ export function checkTags(kind: SystemKind, tags: Tags, content: object): string
   for (const check of checks[kind]) check(tags, errors)
   return errors
 }
+
+/** What a kind 5 deletion asks to remove (DATA-8, NIP-09), counting only what its own author owns. */
+export interface DeletionTargets {
+  /** Ids from `e` tags; they cover an event only if it has the deletion's author and is not itself a deletion. */
+  ids: string[]
+  /** Addresses from `a` tags of the deletion's author; they cover the versions with `created_at <= until`. */
+  addresses: (Address & { until: number })[]
+}
+
+/**
+ * Targets of a deletion, shared by the relay (which deletes them) and the archiver (which leaves them out of a
+ * snapshot, SNAP-3) so both agree on what a deletion covers. Does not check the deletion's kind or signature.
+ */
+export function deletionTargets(deletion: {
+  pubkey: string
+  created_at: number
+  tags: readonly (readonly string[])[]
+}): DeletionTargets {
+  const ids = tagValues(deletion.tags, 'e').filter(isHex64)
+  const addresses: DeletionTargets['addresses'] = []
+  for (const value of tagValues(deletion.tags, 'a')) {
+    const address = parseAddress(value)
+    if (address && address.pubkey === deletion.pubkey) addresses.push({ ...address, until: deletion.created_at })
+  }
+  return { ids, addresses }
+}
