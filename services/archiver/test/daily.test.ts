@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { gunzipSync } from 'node:zlib'
+import { gunzipSync, gzipSync } from 'node:zlib'
 import {
   KIND,
   NOSTR_KIND,
@@ -14,9 +14,9 @@ import {
 } from '@smartcity/schemas'
 import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure'
 import { describe, expect, it } from 'vitest'
-import { GRACE_SECONDS, buildDaily } from '../src/daily.js'
+import { GRACE_SECONDS, buildAddendum, buildDaily } from '../src/daily.js'
 import { fetchDay, fetchDeletions, httpBase, type Fetch } from '../src/relays.js'
-import { runSnapshot } from '../src/snapshot.js'
+import { runAddendum, runSnapshot } from '../src/snapshot.js'
 
 const CITY = 'mx-gdl'
 const DAY = '2025-10-09'
@@ -313,6 +313,86 @@ describe('archiver snapshot', () => {
     const options = { city: CITY, day: DAY, relays: ['wss://a.example'], out: tmpdir() }
     await expect(runSnapshot(options, { fetch, now: AFTER_GRACE - 1, log: () => {} })).rejects.toThrow(/SNAP-1/)
     expect(asked).toEqual([])
+  })
+
+  it('builds an addendum with only the events the published files lack (SNAP-2)', () => {
+    const { sk, pk } = key()
+    const old = observation(sk, pk, FROM + 1)
+    const late = observation(sk, pk, FROM + 2)
+    const addendum = buildAddendum({
+      city: CITY,
+      day: DAY,
+      events: [old, late],
+      deletions: [],
+      relays: [],
+      now: AFTER_GRACE + 86_400,
+      archived: new Set([old.id]),
+      n: 1,
+    })
+    expect(addendum.ndjson).toBe(canonicalLine(late) + '\n')
+    expect(addendum.archived).toBe(1)
+    expect(addendum.name).toBe(`sc_${CITY}_${DAY}_a1.ndjson.gz`)
+    expect(addendum.template.tags).toEqual([['c', CITY], ['t', 'addendum'], ['x', addendum.content.x]])
+    expect([addendum.content.from, addendum.content.to]).toEqual([FROM, TO])
+    expect(validateEvent(addendum.template).ok).toBe(true)
+    expect(() => buildAddendum({ city: CITY, day: DAY, events: [], deletions: [], relays: [], now: AFTER_GRACE, archived: new Set(), n: 0 })).toThrow()
+  })
+
+  it('writes addenda a1, a2 with late events, and nothing when there is nothing new (SNAP-2)', async () => {
+    const { sk, pk } = key()
+    const first = observation(sk, pk, FROM + 1)
+    const lateA = observation(sk, pk, FROM + 2)
+    const lateB = observation(sk, pk, FROM + 3)
+    const store = { 'https://a.example': [first] }
+    const out = await mkdtemp(join(tmpdir(), 'archiver-'))
+    const options = { city: CITY, day: DAY, relays: ['wss://a.example'], out }
+    const deps = { fetch: relays(store), now: AFTER_GRACE, log: () => {} }
+    const daily = await runSnapshot(options, deps)
+    const dailyBytes = await readFile(daily.files.archive)
+
+    store['https://a.example'].push(lateA)
+    const a1 = await runAddendum(options, { ...deps, now: AFTER_GRACE + 3600 })
+    expect(a1.files?.archive).toBe(join(out, `sc_${CITY}_${DAY}_a1.ndjson.gz`))
+    expect(gunzipSync(await readFile(a1.files!.archive)).toString('utf8')).toBe(canonicalLine(lateA) + '\n')
+    const event = JSON.parse(await readFile(a1.files!.event, 'utf8')) as SignedEvent
+    expect(event.tags).toContainEqual(['t', 'addendum'])
+    expect((JSON.parse(event.content) as { count: number }).count).toBe(1)
+
+    store['https://a.example'].push(lateB)
+    const a2 = await runAddendum(options, { ...deps, now: AFTER_GRACE + 7200 })
+    expect(gunzipSync(await readFile(a2.files!.archive)).toString('utf8')).toBe(canonicalLine(lateB) + '\n')
+
+    const none = await runAddendum(options, { ...deps, now: AFTER_GRACE + 9000 })
+    expect(none.files).toBeNull()
+    expect(none.snapshot.archived).toBe(3)
+    await expect(readFile(join(out, `sc_${CITY}_${DAY}_a3.ndjson.gz`))).rejects.toThrow()
+    expect(await readFile(daily.files.archive)).toEqual(dailyBytes)
+  })
+
+  it('keeps applying an archived deletion when no relay serves it any more (SNAP-3)', async () => {
+    const { sk, pk } = key()
+    const target = observation(sk, pk, FROM + 1)
+    const del = deletion(sk, [['c', CITY], ['e', target.id]], FROM + 2)
+    const out = await mkdtemp(join(tmpdir(), 'archiver-'))
+    const options = { city: CITY, day: DAY, relays: ['wss://a.example'], out }
+    const daily = buildDaily({ city: CITY, day: DAY, events: [del], deletions: [], relays: [], now: AFTER_GRACE })
+    await writeFile(join(out, daily.name), daily.gzip)
+    await writeFile(join(out, `sc_${CITY}_${DAY}.snapshot.json`), JSON.stringify(daily.template))
+    // The deletion is archived in the daily; now a relay that never got it serves the deleted event.
+    const result = await runAddendum(options, { fetch: relays({ 'https://a.example': [target] }), now: AFTER_GRACE + 60, log: () => {} })
+    expect(result.files).toBeNull()
+    expect(result.snapshot.deleted).toBe(1)
+  })
+
+  it('refuses an addendum without the daily file, or on a published file that no longer matches its x', async () => {
+    const { sk, pk } = key()
+    const fetch = relays({ 'https://a.example': [observation(sk, pk, FROM + 1)] })
+    const out = await mkdtemp(join(tmpdir(), 'archiver-'))
+    const options = { city: CITY, day: DAY, relays: ['wss://a.example'], out }
+    await expect(runAddendum(options, { fetch, now: AFTER_GRACE, log: () => {} })).rejects.toThrow(/run archiver snapshot first/)
+    const daily = await runSnapshot(options, { fetch, now: AFTER_GRACE, log: () => {} })
+    await writeFile(daily.files.archive, gzipSync('{}\n'))
+    await expect(runAddendum(options, { fetch, now: AFTER_GRACE + 60, log: () => {} })).rejects.toThrow(/does not match/)
   })
 
   it('writes nothing when no relay can be read', async () => {

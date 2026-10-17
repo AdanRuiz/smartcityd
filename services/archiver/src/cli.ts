@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Entry point of the archiver CLI (docs/spec/06).
 import { parseArgs } from 'node:util'
-import { runSnapshot } from './snapshot.js'
+import { runAddendum, runSnapshot } from './snapshot.js'
 
-const USAGE = 'usage: archiver snapshot --city <city> --day <YYYY-MM-DD> --relay <url> [--relay <url>…] [--out <dir>]'
+const USAGE = 'usage: archiver snapshot|addendum --city <city> --day <YYYY-MM-DD> --relay <url> [--relay <url>…] [--out <dir>]'
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv
-  if (command !== 'snapshot') {
+  if (command !== 'snapshot' && command !== 'addendum') {
     console.error(USAGE)
     return 2
   }
@@ -24,7 +24,8 @@ async function main(argv: string[]): Promise<number> {
     console.error(USAGE)
     return 2
   }
-  await runSnapshot(
+  const run = command === 'snapshot' ? runSnapshot : runAddendum
+  await run(
     { city: values.city, day: values.day, relays: values.relay ?? [], out: values.out },
     { fetch: (url, init) => fetch(url, init), now: Math.floor(Date.now() / 1000), log: (line) => console.error(line) },
   )

@@ -2,7 +2,7 @@
 
 CLI de snapshots. Especificación: [`docs/spec/06-distribucion-y-persistencia.md`](../../docs/spec/06-distribucion-y-persistencia.md).
 
-Estado (fase 4): arma el archivo diario y el evento `snapshot` sin firmar (SNAP-1, SNAP-3, SNAP-5). Pendientes según `09-roadmap.md`: firma y publicación del evento, adendas (SNAP-2), IPFS y torrent con web seeds (DIST-1 a DIST-3) y el sello OpenTimestamps con `--verify` (SNAP-7).
+Estado (fase 4): arma el archivo diario, sus adendas y el evento `snapshot` sin firmar de cada uno (SNAP-1, SNAP-2, SNAP-3, SNAP-5). Pendientes según `09-roadmap.md`: firma y publicación del evento, IPFS y torrent con web seeds (DIST-1 a DIST-3) y el sello OpenTimestamps con `--verify` (SNAP-7).
 
 Corre en la máquina del archivista o en CI, no en un Worker. Depende solo de `@smartcity/schemas`, `nostr-tools` y Node. Agregar una dependencia externa cambia `pnpm-lock.yaml`, y eso lo hace una persona, no el agente (`docs/operacion/agente.md`).
 
@@ -20,6 +20,21 @@ node dist/cli.js snapshot --city mx-gdl --day 2026-10-09 \
 - Escribe `sc_<city>_<día>.ndjson.gz` y `sc_<city>_<día>.snapshot.json`, el evento kind 1482 por firmar con `x`, `file`, `count`, `from`, `to` y `relays`.
 
 Sale con código 1 si algún relay no se pudo leer, aunque haya escrito los archivos.
+
+## `archiver addendum`
+
+```sh
+node dist/cli.js addendum --city mx-gdl --day 2026-10-09 \
+  --relay wss://relay-a.example --relay wss://relay-b.example --out snapshots/
+```
+
+Para un día cuyo archivo diario ya está en `--out` (SNAP-2):
+
+- Comprueba cada archivo publicado del día (el diario y las adendas `_a1`, `_a2`…) contra el `x` y el `file.x` de su `.snapshot.json`; si no coinciden, se detiene.
+- Vuelve a leer los relays como `snapshot`, con las mismas verificaciones y borrados, y aplica también los kind 5 que ya están archivados aunque ningún relay los sirva hoy (SNAP-3).
+- Escribe `sc_<city>_<día>_a<N>.ndjson.gz` y `sc_<city>_<día>_a<N>.snapshot.json` (tag `["t", "addendum"]` y los mismos `from` y `to` que el diario, para que el relay sume su `count`, RELAY-4) solo con los eventos que ningún archivo del día tiene. Sin eventos nuevos no escribe nada.
+
+Todavía no usa el cursor de recepción (SNAP-8): vuelve a pedir el día completo.
 
 ## Desarrollo
 

@@ -41,8 +41,15 @@ export interface DailyInput {
   now: number
 }
 
+export interface AddendumInput extends DailyInput {
+  /** Ids already in the day's published files, the daily and earlier addenda: they are not repeated (SNAP-2). */
+  archived: ReadonlySet<string>
+  /** `N` of `_a<N>`, from 1. */
+  n: number
+}
+
 export interface DailySnapshot {
-  /** `sc_<city>_<YYYY-MM-DD>.ndjson.gz`. */
+  /** `sc_<city>_<YYYY-MM-DD>.ndjson.gz`, or `sc_<city>_<YYYY-MM-DD>_a<N>.ndjson.gz` for an addendum. */
   name: string
   ndjson: string
   gzip: Uint8Array
@@ -54,6 +61,8 @@ export interface DailySnapshot {
   discarded: { id: string; reason: string }[]
   /** Events left out because their author asked to delete them (SNAP-3). */
   deleted: number
+  /** Valid events left out because a published file of the day already has them (SNAP-2). */
+  archived: number
 }
 
 const sha256 = (data: string | Uint8Array) => createHash('sha256').update(data).digest('hex')
@@ -151,6 +160,20 @@ export function deletionIndex(deletions: readonly unknown[]): (event: SignedEven
  * the grace period (SNAP-1).
  */
 export function buildDaily(input: DailyInput): DailySnapshot {
+  return build(input, 'daily', `sc_${input.city}_${input.day}.ndjson.gz`, new Set())
+}
+
+/**
+ * Builds addendum `N` of a day already published (SNAP-2): the same checks as `buildDaily`, keeping only the
+ * events none of the day's files has. Its `from` and `to` are the day's, so its `count` adds up with the
+ * daily's (RELAY-4). With nothing new, `count` is 0 and there is nothing to publish.
+ */
+export function buildAddendum(input: AddendumInput): DailySnapshot {
+  if (!Number.isSafeInteger(input.n) || input.n < 1) throw new Error(`addendum number must be 1 or more: ${input.n}`)
+  return build(input, 'addendum', `sc_${input.city}_${input.day}_a${input.n}.ndjson.gz`, input.archived)
+}
+
+function build(input: DailyInput, type: 'daily' | 'addendum', name: string, archived: ReadonlySet<string>): DailySnapshot {
   const range = utcDayRange(input.day)
   if (!range) throw new Error(`day must be a UTC date YYYY-MM-DD: ${input.day}`)
   if (input.now < range.to + GRACE_SECONDS) {
@@ -165,6 +188,7 @@ export function buildDaily(input: DailyInput): DailySnapshot {
   const seen = new Set<string>()
   const kept: SignedEvent[] = []
   let deleted = 0
+  let already = 0
   for (const event of input.events) {
     const id = isEventShape(event) ? event.id : String((event as { id?: unknown } | null)?.id ?? '?')
     if (seen.has(id)) continue
@@ -176,7 +200,8 @@ export function buildDaily(input: DailyInput): DailySnapshot {
     }
     const valid = event as SignedEvent
     seen.add(id)
-    if (isDeleted(valid)) deleted++
+    if (archived.has(id)) already++
+    else if (isDeleted(valid)) deleted++
     else kept.push(valid)
   }
   // An id first seen as a bad copy and later as a good one is not reported as discarded.
@@ -184,7 +209,6 @@ export function buildDaily(input: DailyInput): DailySnapshot {
 
   const ndjson = canonicalNdjson(kept)
   const gzip = new Uint8Array(gzipSync(ndjson))
-  const name = `sc_${input.city}_${input.day}.ndjson.gz`
   const x = sha256(ndjson)
   const content: SnapshotContent = {
     v: 1,
@@ -204,10 +228,10 @@ export function buildDaily(input: DailyInput): DailySnapshot {
     created_at: input.now,
     tags: [
       ['c', input.city],
-      ['t', 'daily'],
+      ['t', type],
       ['x', x],
     ],
     content: JSON.stringify(content),
   }
-  return { name, ndjson, gzip, content, template, discarded: discardedOut, deleted }
+  return { name, ndjson, gzip, content, template, discarded: discardedOut, deleted, archived: already }
 }
