@@ -19,12 +19,16 @@ database_id = "882fe619-7ad8-46d5-bb2a-2b556c8c3cb9"
 migrations_dir = "migrations"
 
 # Daily retention (docs/spec/07, "Retención"): expired events, and days older than RETENTION_DAYS only once archived
-# (RELAY-4). Cron Triggers are not inherited by environments either, so env.b repeats it.
+# (RELAY-4), and only with TRUST_ANCHORS (ADR-20). Cron Triggers are not inherited by environments either, so env.b
+# repeats it.
 [triggers]
 crons = ["17 3 * * *"]
 
 # docs/spec/07, "Configuración". Not implemented yet: MIRROR_FROM (phase 5). TRUST_ANCHORS: comma-separated hex pubkeys whose `roles` lists the relay follows,
-# for WRITE_POLICY=roles and to ask proof of work only of keys without a role; empty until the pilot has custodians.
+# for WRITE_POLICY=roles, to ask proof of work only of keys without a role and to know which keys are archivers;
+# empty until the pilot has custodians (Q-10). RETENTION_DAYS: days kept before a day may be purged, once archived
+# by an archiver of TRUST_ANCHORS; while TRUST_ANCHORS is empty nothing is purged by age, only expired events (RELAY-4,
+# ADR-20).
 [vars]
 RELAY_NAME = "SmartCity relay"
 RELAY_CONTACT = ""

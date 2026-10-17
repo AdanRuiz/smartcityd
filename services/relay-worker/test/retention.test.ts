@@ -1,7 +1,7 @@
 import { KIND } from '@smartcity/schemas'
 import { describe, expect, it } from 'vitest'
 import { readConfig, type RelayVars } from '../src/config.js'
-import { runRetention, webSeeds } from '../src/retention.js'
+import { NO_ANCHORS, runRetention, webSeeds } from '../src/retention.js'
 import { RoleBook } from '../src/roles.js'
 import { CITY, NOW, dataset, deletion, key, observation, relay, roles, sign } from './helpers.js'
 
@@ -57,21 +57,28 @@ function server(files: Record<string, number | 'down'>) {
   return { fetch, asked }
 }
 
-async function setup(vars: RelayVars = {}) {
-  const r = relay({ ...VARS, ...vars })
+/**
+ * A relay with one day of events past retention. By default it has a trust anchor that gives the publishing key
+ * role `archiver`; `anchors: false` leaves TRUST_ANCHORS empty, `archiver: false` keeps the anchor but not the role.
+ */
+async function setup(vars: RelayVars = {}, { anchors = true, archiver = true } = {}) {
+  const anchor = key()
+  const all = { ...VARS, ...(anchors ? { TRUST_ANCHORS: anchor.pk } : {}), ...vars }
+  const r = relay(all)
   const { sk, pk } = key()
   const day = [observation(sk, pk, DAY_START + 100), observation(sk, pk, DAY_START + 200), observation(sk, pk, DAY_START)]
   const later = observation(sk, pk, NOW) // still inside retention at LATER
   const other = dataset(sk, 'Calidad del aire', DAY_START + 50) // addressable with c = '*'
   for (const event of [...day, later, other]) expect((await r.publish(event)).ok).toBe(true)
+  if (anchors && archiver) expect((await r.publish(roles(anchor.sk, [[pk, 'archiver']]))).ok).toBe(true)
   const run = (files: Record<string, number | 'down'>, now = LATER) => {
-    const config = readConfig({ ...VARS, ...vars })
+    const config = readConfig(all)
     const web = server(files)
     return runRetention({ store: r.store, config, roles: new RoleBook(config.trustAnchors), fetch: web.fetch, now }).then(
       (report) => ({ report, asked: web.asked }),
     )
   }
-  return { r, sk, pk, day, run }
+  return { r, sk, pk, anchor, day, run }
 }
 
 describe('retention (docs/spec/07, "Retención", RELAY-4)', () => {
@@ -134,8 +141,7 @@ describe('retention (docs/spec/07, "Retención", RELAY-4)', () => {
   })
 
   it('with TRUST_ANCHORS, only counts snapshots of keys with role archiver', async () => {
-    const anchor = key()
-    const { r, sk, pk, run } = await setup({ TRUST_ANCHORS: anchor.pk })
+    const { r, sk, pk, anchor, run } = await setup({}, { archiver: false })
     expect((await r.publish(snapshot(sk, 4))).ok).toBe(true)
     let { report } = await run({ [URL_GZ]: SIZE })
     expect(report.keptDays.map((d) => d.reason)).toEqual(['no snapshot from an archiver covers the day'])
@@ -143,6 +149,27 @@ describe('retention (docs/spec/07, "Retención", RELAY-4)', () => {
     expect((await r.publish(roles(anchor.sk, [[pk, 'archiver']]))).ok).toBe(true)
     ;({ report } = await run({ [URL_GZ]: SIZE }))
     expect(report.purgedDays).toEqual([{ city: CITY, day: DAY_START }])
+  })
+
+  it('without TRUST_ANCHORS, purges nothing by age even with a valid, obtainable and complete snapshot (ADR-20)', async () => {
+    const { r, sk, run } = await setup({}, { anchors: false })
+    expect((await r.publish(snapshot(sk, 4))).ok).toBe(true)
+    const { report, asked } = await run({ [URL_GZ]: SIZE })
+    expect(report.ageSkipped).toBe(NO_ANCHORS)
+    expect(report.purgedDays).toEqual([])
+    expect(report.purgedRows).toBe(0)
+    expect(asked).toEqual([]) // no snapshot is even probed
+    expect(r.count(OBSERVATIONS)).toBe(4)
+  })
+
+  it('without TRUST_ANCHORS, still deletes expired events (NIP-40, ADR-20)', async () => {
+    const { r, sk, pk, run } = await setup({}, { anchors: false })
+    const expiring = observation(sk, pk, DAY_START + 300, [['expiration', `${NOW + DAY}`]])
+    expect((await r.publish(expiring)).ok).toBe(true)
+    const { report } = await run({ [URL_GZ]: SIZE })
+    expect(report.expiredRows).toBe(5) // the event and its 4 indexed tags
+    expect(r.count(`SELECT COUNT(*) AS n FROM events WHERE id = '${expiring.id}'`)).toBe(0)
+    expect(r.count(OBSERVATIONS)).toBe(4)
   })
 
   it('does not purge days inside RETENTION_DAYS, nor anything with RETENTION_DAYS=0', async () => {

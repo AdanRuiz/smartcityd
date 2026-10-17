@@ -99,6 +99,11 @@ Formato: contexto → decisión → consecuencias. Estado: **aceptada** salvo qu
 - **Decisión:** todo el repositorio, código y documentación, se publica bajo Apache-2.0 (`LICENSE`). Se prefiere a MIT por la concesión explícita de patentes, relevante en firmware IoT y en compras públicas, y a AGPL-3.0 porque el copyleft de red frenaría la adopción del SDK en apps de terceros sin proteger nada que el protocolo abierto no proteja ya.
 - **Consecuencias:** los datos no heredan esta licencia: cada `dataset` declara la suya (EVT, campo `license`) y el mapa base conserva la ODbL de OpenStreetMap con su atribución. `services/relay-strfry` usa la imagen de strfry (GPL-3.0) sin copiar su código; solo la configuración y la política de escritura de este repositorio son Apache-2.0.
 
+### ADR-20 · Sin `TRUST_ANCHORS` no hay purga por antigüedad
+- **Contexto:** RELAY-4 aceptaba como archivista a cualquier llave cuando el relay no tenía `TRUST_ANCHORS`, y los relays de referencia corren sin anclas mientras no haya custodios designados (Q-10). Cualquiera podía entonces publicar un `snapshot` que cubriera un día viejo, apuntar a un archivo propio del tamaño declarado e inflar `count`: el relay daba el día por archivado y borraba sus eventos reales, que ningún archivo legítimo respalda. Eso contradice GOAL-2 y el propósito de RELAY-4.
+- **Decisión:** sin `TRUST_ANCHORS` ningún snapshot cuenta para la condición 1 de RELAY-4, así que el relay no purga por antigüedad; sigue borrando los eventos vencidos (NIP-40) y deja en el log el motivo. El ID RELAY-4 y su prioridad en `11` no cambian.
+- **Consecuencias:** un relay sin anclas crece sin límite por antigüedad; si el almacenamiento se llena, rechaza escrituras (`restricted: storage full`) en lugar de borrar. Para purgar, el operador configura `TRUST_ANCHORS` con llaves que asignen el rol `archiver`. `RETENTION_DAYS` solo tiene efecto con anclas.
+
 ## Propuestas evaluadas y descartadas
 
 Registradas para no volver a discutirlas sin información nueva. Provienen de una revisión externa de la v0.1.
