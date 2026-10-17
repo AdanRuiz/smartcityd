@@ -251,14 +251,14 @@ export class Store {
 
   /**
    * Events of a city (`c` equal to it or to `*`) with `created_at` in `[from, to)`, regular and addressable
-   * only, in canonical order (docs/spec/06), strictly after `after`. `now` in seconds.
+   * only, in canonical order (docs/spec/06), strictly after `after`. Events with an `expiration` tag are left out,
+   * expired or not, as the archiver leaves them out of the daily file (SNAP-16).
    */
   async exportRange(
     city: string,
     range: { from: number; to: number },
     after: ExportPosition | null,
     limit: number,
-    now: number,
   ): Promise<NostrEvent[]> {
     const where = [
       'city IN (?, ?)',
@@ -266,9 +266,10 @@ export class Store {
       'created_at < ?',
       // Replaceable and ephemeral kinds are not archived (NIP-01 ranges, as in kindClass).
       'NOT (kind IN (0, 3) OR (kind >= 10000 AND kind < 30000))',
-      '(expires_at IS NULL OR expires_at > ?)',
+      // SNAP-16: what carries a NIP-40 expiration is not archived.
+      'expires_at IS NULL',
     ]
-    const args: unknown[] = [city, ANY_CITY, range.from, range.to, now]
+    const args: unknown[] = [city, ANY_CITY, range.from, range.to]
     if (after) {
       where.push('(created_at > ? OR (created_at = ? AND id > ?))')
       args.push(after.created_at, after.created_at, after.id)
@@ -280,13 +281,13 @@ export class Store {
   }
 
   /** Number of events `exportRange` would return for the whole range: what a snapshot of it must count. */
-  async countRange(city: string, range: { from: number; to: number }, now: number): Promise<number> {
+  async countRange(city: string, range: { from: number; to: number }): Promise<number> {
     const row = await this.db
       .prepare(
         'SELECT COUNT(*) AS n FROM events WHERE city IN (?, ?) AND created_at >= ? AND created_at < ? ' +
-          'AND NOT (kind IN (0, 3) OR (kind >= 10000 AND kind < 30000)) AND (expires_at IS NULL OR expires_at > ?)',
+          'AND NOT (kind IN (0, 3) OR (kind >= 10000 AND kind < 30000)) AND expires_at IS NULL',
       )
-      .bind(city, ANY_CITY, range.from, range.to, now)
+      .bind(city, ANY_CITY, range.from, range.to)
       .first<{ n: number }>()
     return Number(row?.n ?? 0)
   }
@@ -305,6 +306,7 @@ export class Store {
   /**
    * UTC days (start, in seconds) of a city that still hold purgeable events (regular, not in `keep`) entirely
    * before `before`. Events of `*` or without a city are never listed: no single city's snapshot accounts for them.
+   * Neither are events with an `expiration` tag: no snapshot holds them (SNAP-16), so they go only when they expire.
    */
   async purgeableDays(
     before: number,
@@ -314,7 +316,7 @@ export class Store {
     const { results } = await this.db
       .prepare(
         `SELECT DISTINCT city, (created_at / ${SECONDS_PER_DAY}) * ${SECONDS_PER_DAY} AS day FROM events ` +
-          `WHERE city IS NOT NULL AND city <> ? AND created_at < ? AND ${REGULAR_SQL} ` +
+          `WHERE city IS NOT NULL AND city <> ? AND created_at < ? AND ${REGULAR_SQL} AND expires_at IS NULL ` +
           `AND kind NOT IN (${placeholders(keep.length)}) ORDER BY day ASC, city ASC LIMIT ?`,
       )
       .bind(ANY_CITY, before, ...keep, limit)
@@ -329,7 +331,7 @@ export class Store {
     keep: readonly number[],
   ): Promise<number> {
     const target =
-      `SELECT id FROM events WHERE city = ? AND created_at >= ? AND created_at < ? AND ${REGULAR_SQL} ` +
+      `SELECT id FROM events WHERE city = ? AND created_at >= ? AND created_at < ? AND ${REGULAR_SQL} AND expires_at IS NULL ` +
       `AND kind NOT IN (${placeholders(keep.length)})`
     const args = [city, range.from, range.to, ...keep]
     return rowsWritten(

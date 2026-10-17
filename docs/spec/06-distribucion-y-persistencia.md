@@ -79,7 +79,7 @@ Un fork solo necesita cambiar las llaves de desarrollador embebidas: los datos s
 ### Formato
 
 - **Archivo diario** por ciudad: `sc_<city>_<YYYY-MM-DD>.ndjson.gz`.
-- Contiene todo evento válido de la ciudad (tag `c` igual a la ciudad o a `*`, o `d` en el caso de `city`) con `created_at` dentro de ese día UTC, de kinds regulares y direccionables. Los efímeros no se archivan.
+- Contiene todo evento válido de la ciudad (tag `c` igual a la ciudad o a `*`, o `d` en el caso de `city`) con `created_at` dentro de ese día UTC, de kinds regulares y direccionables. Los efímeros no se archivan, ni los eventos con tag `expiration` (SNAP-16).
 - Un evento por línea, JSON sin espacios, claves en el orden `id, pubkey, created_at, kind, tags, content, sig`.
 - Orden de líneas: `created_at` ascendente, luego `id` ascendente.
 - **Hash canónico `x`**: sha256 del NDJSON **sin comprimir**. Es independiente del compresor.
@@ -93,6 +93,7 @@ Un fork solo necesita cambiar las llaves de desarrollador embebidas: los datos s
 | SNAP-5 | El archivista une eventos de todos los relays que conozca de la ciudad, no de uno solo. |
 | SNAP-8 | Para hallar eventos tardíos el archivista no vuelve a recorrer días ya archivados: guarda por relay el cursor de `GET /v1/export?received_after=` (`07`) y en cada ejecución trae solo lo recibido desde entonces. Lo que caiga en un día ya publicado va a una adenda. En relays sin esa ruta, consulta por `since` una ventana igual al máximo de antigüedad que el relay declare. |
 | SNAP-9 | Con el límite de antigüedad por defecto (30 días, RELAY-5), un día deja de recibir adendas a los 30 días; el consolidado mensual se genera después de ese plazo. |
+| SNAP-16 | El archivista NO DEBE archivar un evento con tag `expiration` (NIP-40) válido, sea cual sea su fecha: el autor lo marcó como temporal y un snapshot es permanente. La exclusión no depende del momento de generar, así que dos archivistas obtienen el mismo `x`. Un tag `expiration` que no es un entero positivo no cuenta como caducidad. |
 
 ### Evento `snapshot` (kind 1482)
 

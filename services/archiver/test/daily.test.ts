@@ -147,14 +147,17 @@ describe('daily file (docs/spec/06, "Formato")', () => {
     expect(daily.discarded.length).toBeGreaterThan(0)
   })
 
-  it('judges NIP-40 expiry at the end of the grace period, not at generation time', () => {
+  it('leaves out every event with a NIP-40 expiration, whatever its date and the generation time (SNAP-16)', () => {
     const { sk, pk } = key()
-    const later = observation(sk, pk, FROM + 1, [['expiration', String(AFTER_GRACE + 3600)]])
-    const input = { city: CITY, day: DAY, events: [later], deletions: [], relays: [] }
+    const kept = observation(sk, pk, FROM + 1)
+    const farFuture = observation(sk, pk, FROM + 2, [['expiration', String(AFTER_GRACE + 365 * 86_400)]])
+    const malformed = observation(sk, pk, FROM + 3, [['expiration', 'soon']]) // not NIP-40: archived, as the relay keeps it
+    const input = { city: CITY, day: DAY, events: [kept, farFuture, malformed], deletions: [], relays: [] }
     const early = buildDaily({ ...input, now: AFTER_GRACE })
-    const late = buildDaily({ ...input, now: AFTER_GRACE + 30 * 86_400 })
+    const late = buildDaily({ ...input, now: AFTER_GRACE + 400 * 86_400 })
+    expect(early.ndjson).toBe(canonicalNdjson([kept, malformed]))
     expect(late.content.x).toBe(early.content.x)
-    expect(early.content.count).toBe(1)
+    expect(early.discarded).toEqual([{ id: farFuture.id, reason: 'has NIP-40 expiration (SNAP-16)' }])
   })
 
   it('omits events their author asked to delete, by id and by address (SNAP-3, DATA-8)', () => {

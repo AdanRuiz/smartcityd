@@ -19,7 +19,7 @@ const fromJson = (event: NostrEvent): NostrEvent => JSON.parse(JSON.stringify(ev
 const sha256 = (data: string | Uint8Array) => createHash('sha256').update(data).digest('hex')
 
 async function dayOf(store: Store, day = OLD_DAY): Promise<string> {
-  const result = await exportDay(store, new URLSearchParams({ c: CITY, day }), NOW)
+  const result = await exportDay(store, new URLSearchParams({ c: CITY, day }))
   if ('error' in result) throw new Error(result.error)
   return result.body
 }

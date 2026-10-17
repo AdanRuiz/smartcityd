@@ -104,6 +104,11 @@ Formato: contexto → decisión → consecuencias. Estado: **aceptada** salvo qu
 - **Decisión:** sin `TRUST_ANCHORS` ningún snapshot cuenta para la condición 1 de RELAY-4, así que el relay no purga por antigüedad; sigue borrando los eventos vencidos (NIP-40) y deja en el log el motivo. El ID RELAY-4 y su prioridad en `11` no cambian.
 - **Consecuencias:** un relay sin anclas crece sin límite por antigüedad; si el almacenamiento se llena, rechaza escrituras (`restricted: storage full`) en lugar de borrar. Para purgar, el operador configura `TRUST_ANCHORS` con llaves que asignen el rol `archiver`. `RETENTION_DAYS` solo tiene efecto con anclas.
 
+### ADR-21 · Los eventos con `expiration` no se archivan
+- **Contexto:** el formato del archivo diario (`06`) no decía qué hacer con los eventos con `expiration` (NIP-40). La primera versión del archivista los incluía si aún no habían vencido al generar, así que el contenido, y con él `x`, dependía de cuándo corría cada archivista. Además, un evento que el autor marcó como temporal quedaba en un archivo permanente (torrent, IPFS, sello OTS) que ya no se puede retirar.
+- **Decisión:** nuevo requisito SNAP-16: ningún evento con tag `expiration` válido entra en un snapshot, sea cual sea su fecha. El relay de referencia aplica la misma regla en `GET /v1/export`, en el conteo de la condición 3 de RELAY-4 y en la purga por antigüedad, que no toca esos eventos: salen del relay solo al vencer. La definición de caducidad válida es una sola, en `packages/schemas`.
+- **Consecuencias:** el archivo es reproducible sin depender de la hora y respeta la intención del autor, en línea con el invariante 4 (sin datos personales en claro, ante la duda no conservar). Se pierde la historia de los datos temporales; si un kind necesita historia y caducidad a la vez, lo resolverá un ADR propio. Un evento con `expiration` muy lejana ocupa espacio en el relay hasta vencer, porque no se purga por antigüedad.
+
 ## Propuestas evaluadas y descartadas
 
 Registradas para no volver a discutirlas sin información nueva. Provienen de una revisión externa de la v0.1.

@@ -95,6 +95,16 @@ describe('retention (docs/spec/07, "Retención", RELAY-4)', () => {
     expect(r.count('SELECT COUNT(*) AS n FROM tags WHERE kind = 1480')).toBe(4) // 1 observation × 4 indexed tags
   })
 
+  it('neither counts nor purges by age an event with expiration: no snapshot holds it (SNAP-16)', async () => {
+    const { r, sk, pk, run } = await setup()
+    const expiring = observation(sk, pk, DAY_START + 300, [['expiration', `${LATER + 365 * DAY}`]])
+    expect((await r.publish(expiring)).ok).toBe(true)
+    expect((await r.publish(snapshot(sk, 4))).ok).toBe(true) // same count as without it
+    const { report } = await run({ [URL_GZ]: SIZE })
+    expect(report.purgedDays).toEqual([{ city: CITY, day: DAY_START }])
+    expect(r.count(`SELECT COUNT(*) AS n FROM events WHERE id = '${expiring.id}'`)).toBe(1)
+  })
+
   it('keeps a day without a covering snapshot', async () => {
     const { r, sk, run } = await setup()
     expect((await r.publish(snapshot(sk, 4, { from: DAY_START + DAY, to: DAY_START + 2 * DAY }))).ok).toBe(true)

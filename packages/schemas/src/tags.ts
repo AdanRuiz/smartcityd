@@ -170,3 +170,13 @@ export function deletionTargets(deletion: {
   }
   return { ids, addresses }
 }
+
+/**
+ * NIP-40 expiration of an event (first `expiration` tag, a positive safe integer of seconds), or null. One
+ * definition for the relay, which deletes the event when it passes, and the archiver, which never archives an
+ * event that carries one (SNAP-16).
+ */
+export function expirationOf(tags: readonly (readonly string[])[]): number | null {
+  const value = Number(tagValues(tags, 'expiration')[0])
+  return Number.isSafeInteger(value) && value > 0 ? value : null
+}

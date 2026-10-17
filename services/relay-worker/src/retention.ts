@@ -156,7 +156,7 @@ async function archived(
       if (addendum.from !== snapshot.from || addendum.to !== snapshot.to) continue
       if (await probes.obtainable(addendum)) count += addendum.count
     }
-    const stored = await store.countRange(city, { from: snapshot.from, to: snapshot.to }, now)
+    const stored = await store.countRange(city, { from: snapshot.from, to: snapshot.to })
     if (count >= stored) return null
     reason = `snapshot count ${count} is below the ${stored} events stored`
   }
