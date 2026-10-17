@@ -79,6 +79,7 @@ Qué se construye primero en la v1 y qué se deja fuera. El **cuándo** está en
 | Entregable | Fase | Requisitos |
 |---|---|---|
 | Kind `live` y caso de transporte en vivo | 5 | DATA-10 |
+| Paquete anual por ciudad con los consolidados mensuales | 4 | SNAP-17 |
 | Gateway IoT para dispositivos que no firman | 5 | GW-1 a GW-8 |
 | Archivo mensual de adjuntos | 4 | SNAP-10 a SNAP-15 |
 | Detección de valores atípicos entre fuentes vecinas | 3 | SPAM-3 |
@@ -123,7 +124,7 @@ Cada ID de la spec aparece una sola vez. Los números son los del ID dentro de s
 | GW | `05` | — | — | 1–8 |
 | DIST | `06` | 1, 2, 3 | 4 | 5 |
 | APP | `06` | 1–5, 7, 9 | 6, 8, 10–16 | — |
-| SNAP | `06` | 1, 2, 3, 5, 6, 7, 16 | 4, 8, 9 | 10–15 |
+| SNAP | `06` | 1, 2, 3, 5, 6, 7, 16 | 4, 8, 9 | 10–15, 17 |
 | RELAY | `07` | 1–4 | 5 | — |
 | SEC | `08` | 1, 2, 3, 5, 6 | 4 | — |
 | PRIV | `08` | 1, 2, 3, 5, 6, 7, 8 | 4, 9 | — |
