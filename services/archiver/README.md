@@ -2,7 +2,7 @@
 
 CLI de snapshots. Especificación: [`docs/spec/06-distribucion-y-persistencia.md`](../../docs/spec/06-distribucion-y-persistencia.md).
 
-Estado (fase 4): arma el archivo diario, sus adendas y el evento `snapshot` sin firmar de cada uno (SNAP-1, SNAP-2, SNAP-3, SNAP-5), el `.torrent` de cada archivo con sus web seeds y su CID de IPFS, con `cid`, `magnet` y `urls` ya en el evento (DIST-1 a DIST-3). Pendientes según `09-roadmap.md`: firma y publicación del evento, subir el archivo a los web seeds, fijarlo en IPFS y el sello OpenTimestamps con `--verify` (SNAP-7).
+Estado (fase 4): arma el archivo diario, sus adendas y el evento `snapshot` sin firmar de cada uno (SNAP-1, SNAP-2, SNAP-3, SNAP-5), el `.torrent` de cada archivo con sus web seeds y su CID de IPFS, con `cid`, `magnet` y `urls` ya en el evento (DIST-1 a DIST-3), y firma y publica ese evento con la llave del archivista (DIST-2). Pendientes según `09-roadmap.md`: subir el archivo a los web seeds, fijarlo en IPFS y el sello OpenTimestamps con `--verify` (SNAP-7).
 
 Corre en la máquina del archivista o en CI, no en un Worker. Depende solo de `@smartcity/schemas`, `nostr-tools` y Node. Agregar una dependencia externa cambia `pnpm-lock.yaml`, y eso lo hace una persona, no el agente (`docs/operacion/agente.md`).
 
@@ -48,6 +48,20 @@ Para un día cuyo archivo diario ya está en `--out` (SNAP-2):
 - Escribe `sc_<city>_<día>_a<N>.ndjson.gz`, su `.torrent` y `sc_<city>_<día>_a<N>.snapshot.json` (tag `["t", "addendum"]` y los mismos `from` y `to` que el diario, para que el relay sume su `count`, RELAY-4) solo con los eventos que ningún archivo del día tiene. Sin eventos nuevos no escribe nada.
 
 Todavía no usa el cursor de recepción (SNAP-8): vuelve a pedir el día completo.
+
+## `archiver publish`
+
+```sh
+node dist/cli.js publish snapshots/sc_mx-gdl_2026-10-09.snapshot.json \
+  --relay wss://relay-a.example --relay wss://relay-b.example --key archivista.ncryptsec
+```
+
+O en el mismo paso que genera el archivo: `archiver snapshot … --publish --key archivista.ncryptsec` (y lo mismo con `addendum`), que publica en los mismos `--relay` de los que leyó.
+
+- La llave es la propia del archivista (ID-4), cifrada con NIP-49; se genera con `node packages/sdk/scripts/city.mjs keygen --out archivista.ncryptsec`. La frase se pide sin eco o se toma de `SC_PASSPHRASE`. Para que los relays purguen los días archivados (RELAY-4), esa llave necesita el rol `archiver` en la lista `roles` de la ciudad.
+- Antes de firmar comprueba el `.ndjson.gz` contra el `x` y el `file.x` del evento (SNAP-6); si no coinciden, no firma.
+- Firma una sola vez: guarda `sc_<city>_<día>[_a<N>].snapshot.signed.json` y, en ejecuciones siguientes, reenvía ese mismo evento sin pedir la llave. Volver a firmar daría otro `id`, y el sello OTS y los relays que ya lo tienen se refieren al primero.
+- Envía el evento a todos los relays a la vez con `POST /v1/events`. Un relay que lo rechaza o no responde se reporta; sale con código 1 solo si ninguno lo aceptó, y se puede repetir más tarde.
 
 ## Desarrollo
 
