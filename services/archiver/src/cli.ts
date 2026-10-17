@@ -1,16 +1,19 @@
 #!/usr/bin/env node
 // Entry point of the archiver CLI (docs/spec/06).
+import { randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
 import { decrypt } from 'nostr-tools/nip49'
 import { runPublish, type PublishDeps } from './publish.js'
 import { runAddendum, runSnapshot } from './snapshot.js'
+import { DEFAULT_CALENDARS, runStamp } from './stamp.js'
 
 const USAGE = [
   'usage: archiver snapshot|addendum --city <city> --day <YYYY-MM-DD> --relay <url> [--relay <url>…] [--out <dir>]',
   '         [--web-seed <base url>…] [--tracker <url>…] [--publish --key <ncryptsec file>]',
   '       archiver publish <file.snapshot.json>… --relay <url>… --key <ncryptsec file>',
+  '       archiver stamp <file.snapshot.signed.json>… [--calendar <url>…]',
 ].join('\n')
 
 /** The passphrase of the key: SC_PASSPHRASE, as in `packages/sdk/scripts/city.mjs`, or asked without echo. */
@@ -43,13 +46,13 @@ function keyFrom(path: string | undefined): PublishDeps['secretKey'] {
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv
-  if (command !== 'snapshot' && command !== 'addendum' && command !== 'publish') {
+  if (command !== 'snapshot' && command !== 'addendum' && command !== 'publish' && command !== 'stamp') {
     console.error(USAGE)
     return 2
   }
   const { values, positionals } = parseArgs({
     args: rest,
-    allowPositionals: command === 'publish',
+    allowPositionals: command === 'publish' || command === 'stamp',
     options: {
       city: { type: 'string' },
       day: { type: 'string' },
@@ -59,6 +62,7 @@ async function main(argv: string[]): Promise<number> {
       tracker: { type: 'string', multiple: true },
       publish: { type: 'boolean', default: false },
       key: { type: 'string' },
+      calendar: { type: 'string', multiple: true },
     },
   })
   const log = (line: string) => console.error(line)
@@ -70,15 +74,17 @@ async function main(argv: string[]): Promise<number> {
     log,
   })
 
-  if (command === 'publish') {
+  if (command === 'publish' || command === 'stamp') {
     if (positionals.length === 0) {
       console.error(USAGE)
       return 2
     }
+    const calendars = values.calendar ?? DEFAULT_CALENDARS
     let failed = 0
     for (const event of positionals) {
       try {
-        await runPublish({ event, relays }, publishDeps())
+        if (command === 'publish') await runPublish({ event, relays }, publishDeps())
+        else await runStamp({ event, calendars }, { fetch: (url, init) => fetch(url, init), random: randomBytes, log })
       } catch (error) {
         log(`${event}: ${error instanceof Error ? error.message : String(error)}`)
         failed++
