@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto'
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
-import { NOSTR_KIND, isCityId, utcDayRange } from '@smartcity/schemas'
+import { KIND, NOSTR_KIND, isCityId, utcDayRange, validateContent } from '@smartcity/schemas'
 import { GRACE_SECONDS, buildAddendum, buildDaily, type DailySnapshot } from './daily.js'
 import { fetchDay, fetchDeletions, wsUrl, type Fetch } from './relays.js'
+import { createTorrent, seedUrl } from './torrent.js'
 
 export interface SnapshotOptions {
   city: string
@@ -12,6 +13,13 @@ export interface SnapshotOptions {
   relays: string[]
   /** Directory where the files are written. */
   out: string
+  /**
+   * DIST-3: base URLs where the files will be published over HTTP (GitHub Releases, R2, a mirror). Each file's URL
+   * goes into the torrent as a web seed and into the event's `urls`.
+   */
+  webSeeds?: string[]
+  /** Trackers of the torrent; `DEFAULT_TRACKERS` when absent, none with an empty list (DHT and web seeds only). */
+  trackers?: string[]
 }
 
 export interface SnapshotDeps {
@@ -23,21 +31,27 @@ export interface SnapshotDeps {
 
 export interface SnapshotResult {
   snapshot: DailySnapshot
-  /** Paths of the `.ndjson.gz` and of the unsigned `snapshot` event. */
-  files: { archive: string; event: string }
+  /** Paths of the `.ndjson.gz`, its `.torrent` and the unsigned `snapshot` event. */
+  files: Files
   /** Relays that could not be read, with the reason. */
   failed: { relay: string; reason: string }[]
 }
 
 export interface AddendumResult extends Omit<SnapshotResult, 'files'> {
   /** Null when the relays had nothing the published files lack: no addendum is written. */
-  files: { archive: string; event: string } | null
+  files: Files | null
+}
+
+export interface Files {
+  archive: string
+  torrent: string
+  event: string
 }
 
 /** Paths of a day's file and of its `snapshot` event: the daily with `n` 0, addendum `n` otherwise (SNAP-2). */
-function paths(out: string, city: string, day: string, n: number): { archive: string; event: string } {
+function paths(out: string, city: string, day: string, n: number): Files {
   const base = join(out, n === 0 ? `sc_${city}_${day}` : `sc_${city}_${day}_a${n}`)
-  return { archive: `${base}.ndjson.gz`, event: `${base}.snapshot.json` }
+  return { archive: `${base}.ndjson.gz`, torrent: `${base}.ndjson.gz.torrent`, event: `${base}.snapshot.json` }
 }
 
 function checkOptions(options: SnapshotOptions, now: number): { from: number; to: number } {
@@ -85,10 +99,28 @@ async function readRelays(options: SnapshotOptions, since: number, deps: Snapsho
   return { events, deletions, read, failed }
 }
 
-async function write(files: { archive: string; event: string }, snapshot: DailySnapshot, out: string, log: (line: string) => void) {
-  await mkdir(out, { recursive: true })
+/**
+ * DIST-1 to DIST-3: the torrent of the file, with its web seeds, and the `magnet` and `urls` of the event. They go
+ * into the content before signing, so the signed event already says where to download the file.
+ */
+function distribute(snapshot: DailySnapshot, options: SnapshotOptions) {
+  const urls = (options.webSeeds ?? []).map((base) => seedUrl(base, snapshot.name))
+  const torrent = createTorrent(snapshot.gzip, { name: snapshot.name, trackers: options.trackers, webSeeds: urls })
+  const content = { ...snapshot.content, magnet: torrent.magnet, ...(urls.length > 0 ? { urls } : {}) }
+  const valid = validateContent(KIND.SNAPSHOT, content)
+  if (!valid.ok) throw new Error(`snapshot content does not validate: ${valid.errors.join('; ')}`)
+  snapshot.content = content
+  snapshot.template = { ...snapshot.template, content: JSON.stringify(content) }
+  return torrent
+}
+
+async function write(files: Files, snapshot: DailySnapshot, options: SnapshotOptions, log: (line: string) => void) {
+  const torrent = distribute(snapshot, options)
+  await mkdir(options.out, { recursive: true })
   await writeFile(files.archive, snapshot.gzip, { flag: 'wx' })
+  await writeFile(files.torrent, torrent.bytes, { flag: 'wx' })
   await writeFile(files.event, JSON.stringify(snapshot.template, null, 2) + '\n', { flag: 'wx' })
+  log(`${files.torrent}: btih ${torrent.infoHash}`)
   log(
     `${snapshot.name}: ${snapshot.content.count} events, ${snapshot.deleted} deleted, ` +
       `${snapshot.discarded.length} discarded, x=${snapshot.content.x}`,
@@ -112,7 +144,7 @@ export async function runSnapshot(options: SnapshotOptions, deps: SnapshotDeps):
   const { events, deletions, read, failed } = await readRelays(options, range.from, deps)
   const snapshot = buildDaily({ city: options.city, day: options.day, events, deletions, relays: read, now: deps.now })
   for (const { id, reason } of snapshot.discarded) deps.log(`discarded ${id}: ${reason}`)
-  await write(files, snapshot, options.out, deps.log)
+  await write(files, snapshot, options, deps.log)
   return { snapshot, files, failed }
 }
 
@@ -159,7 +191,7 @@ export async function runAddendum(options: SnapshotOptions, deps: SnapshotDeps):
     deps.log(`${options.day}: nothing new since the published files (${snapshot.archived} already archived)`)
     return { snapshot, files: null, failed }
   }
-  await write(files, snapshot, options.out, deps.log)
+  await write(files, snapshot, options, deps.log)
   return { snapshot, files, failed }
 }
 
