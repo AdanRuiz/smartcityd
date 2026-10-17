@@ -1,0 +1,23 @@
+{
+  "name": "archiver",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "description": "CLI de snapshots: archivo diario, evento snapshot, publicación y sello (docs/spec/06)",
+  "type": "module",
+  "bin": {
+    "archiver": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@smartcity/schemas": "workspace:*",
+    "nostr-tools": "^2.25.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5"
+  }
+}

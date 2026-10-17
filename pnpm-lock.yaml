@@ -250,6 +250,19 @@ importers:
         specifier: ^6.2.5
         version: 6.2.5
 
+  services/archiver:
+    dependencies:
+      '@smartcity/schemas':
+        specifier: workspace:*
+        version: link:../../packages/schemas
+      nostr-tools:
+        specifier: ^2.25.2
+        version: 2.25.2(typescript@6.0.3)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.20.5
+        version: 22.20.5
+
   services/relay-strfry:
     dependencies:
       '@smartcity/schemas':
