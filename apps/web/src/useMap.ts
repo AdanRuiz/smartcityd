@@ -1,11 +1,23 @@
 import type { BBox, City } from '@smartcity/sdk'
-import { Map as MapLibreMap } from 'maplibre-gl'
+import { Map as MapLibreMap, type StyleSpecification } from 'maplibre-gl'
 import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
 import { useApp } from './client'
-import { getPlace, subscribePlace } from './geo/store'
+import { GEO } from './config'
+import { getPlace, subscribePlace, usePlace } from './geo/store'
 import { mapStyle, registerLocalTiles } from './maplib'
 
 const darkScheme = () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
+
+/**
+ * APP-16: the city's own basemap while the place is inside the city; elsewhere, or without one, the optional world
+ * basemap of `GEO`; with neither, a plain background.
+ */
+function basemap(tiles: string | null, covered: boolean): string | StyleSpecification {
+  const dark = darkScheme()
+  if (tiles && covered) return mapStyle(tiles, dark)
+  const world = dark ? GEO.worldStyleDark : GEO.worldStyle
+  return world || mapStyle(tiles, dark)
+}
 
 /** First `https:` URL of the city's tiles. Other schemes (ipfs:, magnet) need a gateway or a local copy. */
 export function cityTiles(city: City | null): string | null {
@@ -29,6 +41,8 @@ export function useCityMap(container: RefObject<HTMLDivElement | null>, tiles: s
   const cityBox = city?.content.bbox ?? cityConfig.bbox
   // APP-15: a place already chosen or detected sets the first view.
   const startBox = getPlace()?.place.bbox ?? cityBox
+  const placeBox = usePlace()?.place.bbox
+  const covered = !placeBox || intersect(placeBox, cityBox) !== null
   const layers = useRef(addLayers)
   layers.current = addLayers
 
@@ -37,7 +51,7 @@ export function useCityMap(container: RefObject<HTMLDivElement | null>, tiles: s
     const [minLat, minLon, maxLat, maxLon] = startBox
     const map = new MapLibreMap({
       container: container.current!,
-      style: mapStyle(tiles, darkScheme()),
+      style: basemap(tiles, covered),
       bounds: [
         [minLon, minLat],
         [maxLon, maxLat],
@@ -68,13 +82,15 @@ export function useCityMap(container: RefObject<HTMLDivElement | null>, tiles: s
     }
   }, [])
 
-  // Basemap when the tiles become known (city definition or a local file). The map starts with the current ones.
-  const styledWith = useRef(tiles)
+  // Basemap when the tiles become known (city definition or a local file) or the place leaves or enters the city.
+  // The map starts with the current ones.
+  const styledWith = useRef(`${tiles}|${covered}`)
   useEffect(() => {
-    if (styledWith.current === tiles) return
-    styledWith.current = tiles
-    mapRef.current?.setStyle(mapStyle(tiles, darkScheme()))
-  }, [tiles])
+    const key = `${tiles}|${covered}`
+    if (styledWith.current === key) return
+    styledWith.current = key
+    mapRef.current?.setStyle(basemap(tiles, covered))
+  }, [tiles, covered])
 
   return { map: mapRef, ready, view, cityBox }
 }

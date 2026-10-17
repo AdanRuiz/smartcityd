@@ -82,6 +82,7 @@ La app muestra el mapa donde está el usuario y le deja ir a cualquier ciudad. L
 | APP-13 | Después pide la ubicación del navegador (con el permiso del usuario) y, si la obtiene, la usa en lugar de la de IP. Si el usuario niega el permiso, se queda la de IP. |
 | APP-14 | A la derecha del nombre de la ciudad hay un botón de editar. Al pulsarlo, el nombre se vuelve un campo de texto con el nombre actual seleccionado; al escribir (dos letras o más) aparecen sugerencias de ciudades con el nombre y, debajo y en letra más pequeña, estado o región y país. Escape o salir del campo cancela. |
 | APP-15 | Elegir una sugerencia lleva el mapa a esa ciudad y la guarda en el origen (APP-11); con una elección guardada la app no vuelve a ubicar al usuario. Mover el mapa no cambia la ciudad de los datos (tag `c`), que sigue siendo la configurada en el build. |
+| APP-16 | Donde la ciudad no tiene mapa base propio (el lugar cae fuera de su `bbox`, o la ciudad no publica teselas), la app usa un mapa base mundial público, gratuito y sin llave, configurable y opcional. Sin él, el mapa se muestra sobre fondo liso, como antes. Dentro de la ciudad manda su mapa base propio. |
 
 Un fork solo necesita cambiar las llaves de desarrollador embebidas: los datos son los mismos porque viven en los relays, no en la app.
 
