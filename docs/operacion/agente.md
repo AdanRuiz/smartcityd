@@ -44,7 +44,7 @@ powershell -ExecutionPolicy Bypass -File scripts\agent\run.ps1 -DryRun   # simul
 powershell -ExecutionPolicy Bypass -File scripts\agent\install.ps1       # registra la tarea al iniciar sesión
 ```
 
-La repetición cada hora empieza a contar desde el inicio de sesión: si acabas de registrarla, corre en el siguiente inicio de sesión o lánzala ya con `Start-ScheduledTask -TaskName smartcity-agent`. Para cambiar la frecuencia: `install.ps1 -EveryMinutes 30`. Para quitarla: `install.ps1 -Uninstall`.
+Al registrarla, la primera corrida es 3 minutos después y de ahí cada hora, sin esperar a un nuevo inicio de sesión. Para lanzarla en el momento: `Start-ScheduledTask -TaskName smartcity-agent`. Para cambiar la frecuencia: `install.ps1 -EveryMinutes 30`. Para quitarla: `install.ps1 -Uninstall`.
 
 ## Uso diario
 

@@ -28,15 +28,22 @@ $script = Join-Path $PSScriptRoot 'run.ps1'
 $user = "$env:USERDOMAIN\$env:USERNAME"
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
   -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script`""
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
-$trigger.Delay = "PT${DelayMinutes}M"
+$every = New-TimeSpan -Minutes $EveryMinutes
+$atLogOn = New-ScheduledTaskTrigger -AtLogOn -User $user
+$atLogOn.Delay = "PT${DelayMinutes}M"
 # Repeat for as long as the session lasts (no duration = indefinitely).
-$trigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes $EveryMinutes)).Repetition
+$atLogOn.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval $every).Repetition
+# A logon trigger only starts repeating at the next logon, so a task registered
+# mid-session would sit idle until then. This one repeats from now on; the
+# Interactive principal keeps it from running while logged off, and
+# IgnoreNew drops a run that overlaps another.
+$fromNow = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes($DelayMinutes) -RepetitionInterval $every
+$trigger = @($atLogOn, $fromNow)
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
   -ExecutionTimeLimit (New-TimeSpan -Hours 4) -MultipleInstances IgnoreNew
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
   -Principal $principal -Description 'SmartCity: unattended Claude Code agent (docs/operacion/agente.md)' -Force | Out-Null
-Write-Host "Registered '$TaskName': runs $script $DelayMinutes min after $user logs on, then every $EveryMinutes min."
+Write-Host "Registered '$TaskName': runs $script in $DelayMinutes min and $DelayMinutes min after $user logs on, then every $EveryMinutes min."
 Write-Host "Run it now with: Start-ScheduledTask -TaskName $TaskName"
