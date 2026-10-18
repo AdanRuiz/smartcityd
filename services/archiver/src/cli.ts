@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
 import { decrypt } from 'nostr-tools/nip49'
+import { runApp } from './app.js'
 import { runAttest } from './attest.js'
 import type { Timestamp } from './ots.js'
 import { runPublish, type PublishDeps } from './publish.js'
@@ -20,6 +21,7 @@ const USAGE = [
   '       archiver stamp <file.snapshot.signed.json>… [--calendar <url>…]',
   '       archiver upgrade <file.snapshot.ots>… [--calendar <url>…] [--verify [--esplora <url>…]]',
   '       archiver attest <file.snapshot.ots>… --relay <url>… --key <ncryptsec file> [--verify [--esplora <url>…]]',
+  '       archiver app <app dist dir> [--web-seed <mirror url>…] [--tracker <url>…] [--out <dir>]',
 ].join('\n')
 
 /** The passphrase of the key: SC_PASSPHRASE, as in `packages/sdk/scripts/city.mjs`, or asked without echo. */
@@ -53,13 +55,13 @@ function keyFrom(path: string | undefined): PublishDeps['secretKey'] {
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv
   const perFile = command === 'publish' || command === 'stamp' || command === 'upgrade' || command === 'attest'
-  if (command !== 'snapshot' && command !== 'addendum' && !perFile) {
+  if (command !== 'snapshot' && command !== 'addendum' && command !== 'app' && !perFile) {
     console.error(USAGE)
     return 2
   }
   const { values, positionals } = parseArgs({
     args: rest,
-    allowPositionals: perFile,
+    allowPositionals: perFile || command === 'app',
     options: {
       city: { type: 'string' },
       day: { type: 'string' },
@@ -82,6 +84,20 @@ async function main(argv: string[]): Promise<number> {
     secretKey: keyFrom(values.key),
     log,
   })
+
+  // The `dist` of the app's `release` (DIST-1, DIST-3); stdout is what `city.mjs draft-release` takes.
+  if (command === 'app') {
+    if (positionals.length !== 1) {
+      console.error(USAGE)
+      return 2
+    }
+    const app = await runApp(
+      { dir: positionals[0]!, out: values.out, webSeeds: values['web-seed'] ?? [], trackers: values.tracker },
+      log,
+    )
+    console.log(`--dist-cid ${app.cid} --dist-magnet '${app.magnet}'`)
+    return 0
+  }
 
   if (perFile) {
     if (positionals.length === 0) {

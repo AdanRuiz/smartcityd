@@ -83,11 +83,14 @@ pnpm --filter @smartcity/sdk e2e wss://relay-a,wss://relay-b   # NFR-1 contra re
 
 `city` (`node scripts/city.mjs`) es la herramienta de los custodios: llaves raíz cifradas, borradores de `city`, `roles` y del dataset de calidad del aire, firma sin conexión, verificación de la mayoría (TRUST-12) y publicación con `sc.send`. Guía en [`docs/operacion/ciudad-piloto.md`](../../docs/operacion/ciudad-piloto.md).
 
-`draft-release` (en la misma herramienta) redacta el evento `release` (kind 31486, `06`) de una versión de la app con `releaseTemplate`: lee `apps/web/dist/smartcity.html` (o `--file`) y pone su sha256 en el tag `x` y en `single.x` (DIST-2), su tamaño, las `--url` de descarga, los `--mirror`, la versión de `apps/web/package.json` (o `--version`), el commit de `git rev-parse HEAD` (o `--commit`) y, si se dan, `--dist-cid` y `--dist-magnet`. Canal `stable` por defecto (`--channel beta`). El desarrollador lo firma con `sign --key <su llave>` y lo publica con `publish`, como los demás borradores:
+`draft-release` (en la misma herramienta) redacta el evento `release` (kind 31486, `06`) de una versión de la app con `releaseTemplate`: lee `apps/web/dist/smartcity.html` (o `--file`) y pone su sha256 en el tag `x` y en `single.x` (DIST-2), su tamaño, las `--url` de descarga, los `--mirror`, la versión de `apps/web/package.json` (o `--version`), el commit de `git rev-parse HEAD` (o `--commit`) y, si se dan, `--dist-cid` y `--dist-magnet`, que calcula `archiver app` (CID de `dist/` y magnet de `smartcity.html` con los espejos como web seeds; ver [`services/archiver`](../../services/archiver/README.md)). Canal `stable` por defecto (`--channel beta`). El desarrollador lo firma con `sign --key <su llave>` y lo publica con `publish`, como los demás borradores:
 
 ```sh
 pnpm build
-node scripts/city.mjs draft-release release.draft.json --url https://…/smartcity.html --mirror https://smartcity-web.pages.dev
+node ../../services/archiver/dist/cli.js app ../../apps/web/dist --web-seed https://smartcity-web.pages.dev --out .
+# imprime --dist-cid … --dist-magnet '…'
+node scripts/city.mjs draft-release release.draft.json --url https://…/smartcity.html --mirror https://smartcity-web.pages.dev \
+  --dist-cid bafy… --dist-magnet 'magnet:?…'
 node scripts/city.mjs sign release.draft.json --key desarrollador.ncryptsec --out release.json
 node scripts/city.mjs publish release.json
 ```

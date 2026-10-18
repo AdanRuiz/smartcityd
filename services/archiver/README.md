@@ -2,7 +2,7 @@
 
 CLI de snapshots. Especificación: [`docs/spec/06-distribucion-y-persistencia.md`](../../docs/spec/06-distribucion-y-persistencia.md).
 
-Estado (fase 4): arma el archivo diario, sus adendas y el evento `snapshot` sin firmar de cada uno (SNAP-1, SNAP-2, SNAP-3, SNAP-5), el `.torrent` de cada archivo con sus web seeds y su CID de IPFS, con `cid`, `magnet` y `urls` ya en el evento (DIST-1 a DIST-3), firma y publica ese evento con la llave del archivista (DIST-2) sella su `id` en los calendarios de OpenTimestamps, completa la prueba cuando confirma la transacción y la publica como kind 1040 (NIP-03) en los relays ("Sello de tiempo"); con `--verify` comprueba la prueba contra los encabezados de bloque de Bitcoin (SNAP-7). Pendientes según `09-roadmap.md`: subir el archivo a los web seeds y fijarlo en IPFS.
+Estado (fase 4): arma el archivo diario, sus adendas y el evento `snapshot` sin firmar de cada uno (SNAP-1, SNAP-2, SNAP-3, SNAP-5), el `.torrent` de cada archivo con sus web seeds y su CID de IPFS, con `cid`, `magnet` y `urls` ya en el evento (DIST-1 a DIST-3), firma y publica ese evento con la llave del archivista (DIST-2) sella su `id` en los calendarios de OpenTimestamps, completa la prueba cuando confirma la transacción y la publica como kind 1040 (NIP-03) en los relays ("Sello de tiempo"); con `--verify` comprueba la prueba contra los encabezados de bloque de Bitcoin (SNAP-7). También calcula el CID de IPFS y el torrent de un build de la app para su evento `release` (`archiver app`, DIST-1, DIST-3). Pendientes según `09-roadmap.md`: subir el archivo a los web seeds y fijarlo en IPFS.
 
 Corre en la máquina del archivista o en CI, no en un Worker. Depende solo de `@smartcity/schemas`, `nostr-tools` y Node. Agregar una dependencia externa cambia `pnpm-lock.yaml`, y eso lo hace una persona, no el agente (`docs/operacion/agente.md`).
 
@@ -114,6 +114,20 @@ node dist/cli.js upgrade snapshots/sc_mx-gdl_2026-10-09.snapshot.ots --verify --
 - Los encabezados los pide a APIs Esplora (`GET /block-height/<altura>` y `GET /block/<hash>/header`), sin dependencias: por defecto `DEFAULT_ESPLORAS` en `src/verify.ts` (blockstream.info y mempool.space, dos operadores); `--esplora <url>` (repetible) las reemplaza. La única fuente que no exige confianza es una Esplora propia delante de un nodo Bitcoin (electrs); las públicas son una conveniencia.
 - Cada encabezado debe tener el hash que la API dio y cumplir la prueba de trabajo de su propio `nBits`, así una API no puede inventar un bloque sin minarlo. Se pregunta a todas: las que responden deben dar el mismo encabezado, y una caída solo resta.
 - Falla (código 1) si una atestación apunta a un bloque con otra raíz, si las Esplora no coinciden, si ninguna responde o si la prueba no tiene atestaciones de Bitcoin. Las atestaciones pendientes o desconocidas no cuentan.
+
+## `archiver app`
+
+```sh
+pnpm build
+node dist/cli.js app ../../apps/web/dist --web-seed https://smartcity-web.pages.dev --web-seed https://<otro espejo> --out .
+```
+
+Calcula el `dist` del evento `release` (kind 31486, docs/spec/06) de un build de la app, sin red ni dependencias, para ponerlo en el borrador antes de que lo firme el desarrollador (`city.mjs draft-release --dist-cid … --dist-magnet …`, ver [`packages/sdk`](../../packages/sdk/README.md)). Publica el build en las dos redes de DIST-1:
+
+- **IPFS:** `cid` es el CID del directorio `dist/` entero, el mismo que da `ipfs add -r --cid-version=1 apps/web/dist` con los valores por defecto de kubo (sin los archivos ocultos, como ese comando). Con él la app abre en `https://<gateway>/ipfs/<cid>/` y el archivo único en `…/<cid>/smartcity.html` (APP-2). Fijarlo es `ipfs add -r --cid-version=1` en un nodo propio o de voluntarios (ADR-15).
+- **BitTorrent:** el torrent es de `smartcity.html` solo (APP-4), el archivo que quien llega por torrent abre con doble clic ("Canales"). Escribe `smartcity.html.torrent` en `--out` y su magnet lleva como web seeds (`ws=`, DIST-3) `<espejo>/smartcity.html` por cada `--web-seed`: los espejos ya lo sirven, porque está en `dist/`. Un torrent del directorio entero no podría usarlos, porque BEP-19 busca sus archivos en `<espejo>/<nombre del torrent>/`.
+- Imprime en stdout `--dist-cid <cid> --dist-magnet '<magnet>'`; en stderr, el sha256 de `smartcity.html`, que debe coincidir con el `x` del `release`. Sale con error si el build no tiene `smartcity.html`.
+- `--tracker` funciona como en `snapshot`. El torrent no depende de la fecha, así que otro voluntario con el mismo `smartcity.html` y los mismos web seeds obtiene el mismo magnet y puede sembrarlo.
 
 ## Desarrollo
 
