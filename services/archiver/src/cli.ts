@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
 import { decrypt } from 'nostr-tools/nip49'
+import { runAttest } from './attest.js'
 import { runPublish, type PublishDeps } from './publish.js'
 import { runAddendum, runSnapshot } from './snapshot.js'
 import { DEFAULT_CALENDARS, runStamp } from './stamp.js'
@@ -16,6 +17,7 @@ const USAGE = [
   '       archiver publish <file.snapshot.json>… --relay <url>… --key <ncryptsec file>',
   '       archiver stamp <file.snapshot.signed.json>… [--calendar <url>…]',
   '       archiver upgrade <file.snapshot.ots>… [--calendar <url>…]',
+  '       archiver attest <file.snapshot.ots>… --relay <url>… --key <ncryptsec file>',
 ].join('\n')
 
 /** The passphrase of the key: SC_PASSPHRASE, as in `packages/sdk/scripts/city.mjs`, or asked without echo. */
@@ -48,7 +50,7 @@ function keyFrom(path: string | undefined): PublishDeps['secretKey'] {
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv
-  const perFile = command === 'publish' || command === 'stamp' || command === 'upgrade'
+  const perFile = command === 'publish' || command === 'stamp' || command === 'upgrade' || command === 'attest'
   if (command !== 'snapshot' && command !== 'addendum' && !perFile) {
     console.error(USAGE)
     return 2
@@ -87,6 +89,7 @@ async function main(argv: string[]): Promise<number> {
     for (const event of positionals) {
       try {
         if (command === 'publish') await runPublish({ event, relays }, publishDeps())
+        else if (command === 'attest') await runAttest({ ots: event, relays }, publishDeps())
         else if (command === 'stamp') {
           await runStamp({ event, calendars }, { fetch: (url, init) => fetch(url, init), random: randomBytes, log })
         } else await runUpgrade({ ots: event, calendars }, { fetch: (url, init) => fetch(url, init), log })

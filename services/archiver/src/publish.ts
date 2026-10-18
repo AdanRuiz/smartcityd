@@ -101,19 +101,20 @@ async function post(fetch: Post, relay: string, event: SignedEvent): Promise<voi
 }
 
 /**
- * `archiver publish <file.snapshot.json> --relay <url>… --key <ncryptsec>`: signs the `snapshot` event of a written
- * file and sends it to every relay at the same time. One that refuses or fails is reported, since none is
- * mandatory; it throws only when no relay accepted the event. Running it again sends the same signed event, so a
- * relay that was down can be caught up later.
+ * Sends a signed event to every relay at the same time. One that refuses or fails is reported, since none is
+ * mandatory; it throws only when no relay accepted the event, naming `kept`, the file to publish it from later.
  */
-export async function runPublish(options: PublishOptions, deps: PublishDeps): Promise<PublishResult> {
-  if (options.relays.length === 0) throw new Error('at least one --relay is needed to publish')
-  const { event, signed } = await signOnce(options.event, deps)
-  const results = await Promise.allSettled(options.relays.map((relay) => post(deps.fetch, relay, event)))
+export async function broadcast(
+  relays: string[],
+  event: SignedEvent,
+  kept: string,
+  deps: Pick<PublishDeps, 'fetch' | 'log'>,
+): Promise<Pick<PublishResult, 'accepted' | 'rejected'>> {
+  const results = await Promise.allSettled(relays.map((relay) => post(deps.fetch, relay, event)))
   const accepted: string[] = []
   const rejected: PublishResult['rejected'] = []
   results.forEach((result, i) => {
-    const relay = options.relays[i]!
+    const relay = relays[i]!
     if (result.status === 'fulfilled') {
       accepted.push(wsUrl(relay))
       deps.log(`${relay}: accepted ${event.id}`)
@@ -123,6 +124,17 @@ export async function runPublish(options: PublishOptions, deps: PublishDeps): Pr
       deps.log(`${relay}: rejected (${reason})`)
     }
   })
-  if (accepted.length === 0) throw new Error(`no relay accepted ${event.id}; ${signed} is kept to publish it later`)
-  return { event, signed, accepted, rejected }
+  if (accepted.length === 0) throw new Error(`no relay accepted ${event.id}; ${kept} is kept to publish it later`)
+  return { accepted, rejected }
+}
+
+/**
+ * `archiver publish <file.snapshot.json> --relay <url>… --key <ncryptsec>`: signs the `snapshot` event of a written
+ * file and sends it to every relay at the same time (`broadcast`). Running it again sends the same signed event, so
+ * a relay that was down can be caught up later.
+ */
+export async function runPublish(options: PublishOptions, deps: PublishDeps): Promise<PublishResult> {
+  if (options.relays.length === 0) throw new Error('at least one --relay is needed to publish')
+  const { event, signed } = await signOnce(options.event, deps)
+  return { event, signed, ...(await broadcast(options.relays, event, signed, deps)) }
 }
