@@ -2,7 +2,7 @@
 
 CLI de snapshots. Especificación: [`docs/spec/06-distribucion-y-persistencia.md`](../../docs/spec/06-distribucion-y-persistencia.md).
 
-Estado (fase 4): arma el archivo diario, sus adendas y el evento `snapshot` sin firmar de cada uno (SNAP-1, SNAP-2, SNAP-3, SNAP-5), el `.torrent` de cada archivo con sus web seeds y su CID de IPFS, con `cid`, `magnet` y `urls` ya en el evento (DIST-1 a DIST-3), firma y publica ese evento con la llave del archivista (DIST-2) y sella su `id` en los calendarios de OpenTimestamps (paso 1 de "Sello de tiempo"). Pendientes según `09-roadmap.md`: subir el archivo a los web seeds, fijarlo en IPFS, publicar la prueba como kind 1040 (NIP-03), completarla cuando confirme Bitcoin y verificarla con `--verify` (SNAP-7).
+Estado (fase 4): arma el archivo diario, sus adendas y el evento `snapshot` sin firmar de cada uno (SNAP-1, SNAP-2, SNAP-3, SNAP-5), el `.torrent` de cada archivo con sus web seeds y su CID de IPFS, con `cid`, `magnet` y `urls` ya en el evento (DIST-1 a DIST-3), firma y publica ese evento con la llave del archivista (DIST-2) sella su `id` en los calendarios de OpenTimestamps y completa la prueba cuando confirma la transacción (pasos 1 y 3 de "Sello de tiempo"). Pendientes según `09-roadmap.md`: subir el archivo a los web seeds, fijarlo en IPFS, publicar la prueba como kind 1040 (NIP-03) y verificarla contra Bitcoin con `--verify` (SNAP-7).
 
 Corre en la máquina del archivista o en CI, no en un Worker. Depende solo de `@smartcity/schemas`, `nostr-tools` y Node. Agregar una dependencia externa cambia `pnpm-lock.yaml`, y eso lo hace una persona, no el agente (`docs/operacion/agente.md`).
 
@@ -74,7 +74,19 @@ node dist/cli.js stamp snapshots/sc_mx-gdl_2026-10-09.snapshot.signed.json
 - `--calendar <url>` (repetible) reemplaza los calendarios por defecto (`DEFAULT_CALENDARS` en `src/stamp.ts`: los cuatro del cliente de referencia, de tres operadores). Un calendario que falla o responde algo que no es una prueba válida se reporta; sale con código 1 solo si ninguno respondió, y no escribe nada.
 - La prueba queda pendiente hasta que la transacción del calendario confirme (horas). Nunca sobrescribe un `.ots` que ya existe; volver a correrlo solo lo reporta.
 
-Todavía no publica la prueba como kind 1040, no la completa con el bloque de Bitcoin ni la verifica (`--verify`, SNAP-7).
+Todavía no publica la prueba como kind 1040. Para completarla, `archiver upgrade`.
+
+## `archiver upgrade`
+
+```sh
+node dist/cli.js upgrade snapshots/sc_mx-gdl_2026-10-09.snapshot.ots
+```
+
+- Completa una prueba pendiente cuando la transacción del calendario confirma (docs/spec/06, "Sello de tiempo", paso 3), como `ots upgrade`: por cada atestación pendiente pide `GET <calendario>/timestamp/<compromiso>` y une la respuesta en ese nodo. Las atestaciones pendientes se conservan, así un calendario que aún no confirma puede completar su parte en otra corrida.
+- Solo consulta los calendarios permitidos: los de `--calendar` o, sin él, `DEFAULT_CALENDARS`. La URI de la atestación viene del archivo y no se sigue si no está en esa lista.
+- Un calendario que responde 404 aún no confirma; uno que falla o responde algo que no es una prueba se reporta y no cambia nada. Reemplaza el `.ots` (a través de un archivo temporal) solo si algo se agregó.
+- Reporta los bloques de Bitcoin que la prueba atestigua, o que sigue pendiente. Sale con código 0 en ambos casos; se repite más tarde (horas) hasta que aparezca un bloque.
+- No comprueba que el bloque contenga el compromiso: eso es la verificación (`--verify`, SNAP-7), pendiente.
 
 ## Desarrollo
 
