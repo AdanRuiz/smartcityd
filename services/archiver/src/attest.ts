@@ -10,6 +10,11 @@ export interface AttestOptions {
   ots: string
   /** Relays that receive the kind 1040 event through `POST /v1/events`. */
   relays: string[]
+  /**
+   * `--verify` (SNAP-7): checks the proof that goes in the event against Bitcoin before signing it or sending it, and
+   * throws if it does not verify. Without it the block is taken on the calendars' word.
+   */
+  verify?: (digest: Uint8Array, timestamp: Timestamp) => Promise<unknown>
 }
 
 export interface AttestResult {
@@ -48,10 +53,11 @@ export function bitcoinBranch(ts: Timestamp): { height: number; timestamp: Times
 }
 
 /** The Bitcoin branch of the proof in a saved kind 1040 `content`, if it seals `id`; null if it does not parse or seal it. */
-function savedBranch(content: string, id: string): { height: number } | null {
+function savedBranch(content: string, id: string): { height: number; digest: Uint8Array; timestamp: Timestamp } | null {
   try {
     const { digest, timestamp } = parseDetached(Buffer.from(content, 'base64'))
-    return Buffer.from(digest).toString('hex') === id ? bitcoinBranch(timestamp) : null
+    const branch = Buffer.from(digest).toString('hex') === id ? bitcoinBranch(timestamp) : null
+    return branch && { height: branch.height, digest, timestamp }
   } catch {
     return null
   }
@@ -65,7 +71,7 @@ function savedBranch(content: string, id: string): { height: number } | null {
  * branch to the lowest block is kept. The proof must seal the `id` of the signed snapshot next to it. As `publish`, it signs
  * once with the archiver's key (ID-4) and later runs resend that event as it is, even if `upgrade` changed the `.ots`
  * since; a saved copy that is not a valid signed proof of this snapshot is refused.
- * Whether the block really contains the commitment is `--verify`'s job.
+ * With `verify`, the proof in the event must verify against Bitcoin before the key is asked for or anything is sent.
  */
 export async function runAttest(options: AttestOptions, deps: PublishDeps): Promise<AttestResult> {
   if (options.relays.length === 0) throw new Error('at least one --relay is needed to publish')
@@ -92,11 +98,13 @@ export async function runAttest(options: AttestOptions, deps: PublishDeps): Prom
     const branch = saved ? savedBranch(event.content, snapshot.id) : null
     if (!branch) throw new Error(`${signed} is not a valid signed proof of this snapshot; remove it to sign again`)
     height = branch.height
+    await options.verify?.(branch.digest, branch.timestamp)
     deps.log(`${signed}: already signed, id ${event.id}, Bitcoin block ${height}`)
   } else {
     const branch = bitcoinBranch(timestamp)
     if (!branch) throw new Error(`${options.ots}: still pending, no Bitcoin attestation yet; run archiver upgrade first`)
     height = branch.height
+    await options.verify?.(digest, branch.timestamp)
     const content = Buffer.from(serializeDetached(digest, branch.timestamp)).toString('base64')
     const sk = await deps.secretKey()
     try {

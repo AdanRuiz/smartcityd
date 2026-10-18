@@ -5,7 +5,7 @@ import { KIND, NOSTR_KIND, type SignedEvent } from '@smartcity/schemas'
 import { finalizeEvent, generateSecretKey, getPublicKey, verifyEvent } from 'nostr-tools/pure'
 import { describe, expect, it } from 'vitest'
 import { bitcoinBranch, runAttest } from '../src/attest.js'
-import { attestations, parseDetached, serializeDetached, type Timestamp } from '../src/ots.js'
+import { attestations, parseDetached, serializeDetached, serializeTimestamp, type Timestamp } from '../src/ots.js'
 import type { Post, PublishDeps } from '../src/publish.js'
 
 const NOW = 1_760_200_000
@@ -148,6 +148,30 @@ describe('archiver attest (NIP-03, SNAP-7)', () => {
     const { ots } = await stamped(proof(via('a', bitcoin(1))), undefined, [])
     const { post } = relays({ 'https://a.example': true })
     await expect(runAttest({ ots, relays: ['wss://a.example'] }, deps(post, generateSecretKey()))).rejects.toThrow(/without a c tag/)
+  })
+
+  it('with --verify, checks the branch it publishes and neither signs nor sends one that does not verify', async () => {
+    const { snapshot, ots, signed } = await stamped(proof(via('a', bitcoin(917_200)), via('b', pending('https://b.example'))))
+    const sk = generateSecretKey()
+    const { post, received } = relays({ 'https://a.example': true })
+    const refuse = async () => {
+      throw new Error('Bitcoin block 917200 does not contain the commitment')
+    }
+    const d = deps(post, sk)
+    await expect(runAttest({ ots, relays: ['wss://a.example'], verify: refuse }, d)).rejects.toThrow(/does not contain/)
+    expect(d.asked()).toBe(0)
+    expect(received).toEqual([])
+
+    const hex = (b: Uint8Array) => Buffer.from(b).toString('hex')
+    const checked: { digest: string; timestamp: string }[] = []
+    const accept = async (digest: Uint8Array, timestamp: Timestamp) => checked.push({ digest: hex(digest), timestamp: hex(serializeTimestamp(timestamp)) })
+    await runAttest({ ots, relays: ['wss://a.example'], verify: accept }, deps(post, sk))
+    expect(checked).toEqual([{ digest: snapshot.id, timestamp: hex(serializeTimestamp(proof(via('a', bitcoin(917_200))))) }])
+
+    // The saved event is checked again before it is resent.
+    await expect(runAttest({ ots, relays: ['wss://a.example'], verify: refuse }, deps(post, sk))).rejects.toThrow(/does not contain/)
+    expect(received).toHaveLength(1)
+    expect(JSON.parse(await readFile(signed, 'utf8')).id).toBe(received[0]!.event.id)
   })
 
   it('needs a relay and a .snapshot.ots file', async () => {
