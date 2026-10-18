@@ -8,12 +8,14 @@ import { decrypt } from 'nostr-tools/nip49'
 import { runPublish, type PublishDeps } from './publish.js'
 import { runAddendum, runSnapshot } from './snapshot.js'
 import { DEFAULT_CALENDARS, runStamp } from './stamp.js'
+import { runUpgrade } from './upgrade.js'
 
 const USAGE = [
   'usage: archiver snapshot|addendum --city <city> --day <YYYY-MM-DD> --relay <url> [--relay <url>…] [--out <dir>]',
   '         [--web-seed <base url>…] [--tracker <url>…] [--publish --key <ncryptsec file>]',
   '       archiver publish <file.snapshot.json>… --relay <url>… --key <ncryptsec file>',
   '       archiver stamp <file.snapshot.signed.json>… [--calendar <url>…]',
+  '       archiver upgrade <file.snapshot.ots>… [--calendar <url>…]',
 ].join('\n')
 
 /** The passphrase of the key: SC_PASSPHRASE, as in `packages/sdk/scripts/city.mjs`, or asked without echo. */
@@ -46,13 +48,14 @@ function keyFrom(path: string | undefined): PublishDeps['secretKey'] {
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv
-  if (command !== 'snapshot' && command !== 'addendum' && command !== 'publish' && command !== 'stamp') {
+  const perFile = command === 'publish' || command === 'stamp' || command === 'upgrade'
+  if (command !== 'snapshot' && command !== 'addendum' && !perFile) {
     console.error(USAGE)
     return 2
   }
   const { values, positionals } = parseArgs({
     args: rest,
-    allowPositionals: command === 'publish' || command === 'stamp',
+    allowPositionals: perFile,
     options: {
       city: { type: 'string' },
       day: { type: 'string' },
@@ -74,7 +77,7 @@ async function main(argv: string[]): Promise<number> {
     log,
   })
 
-  if (command === 'publish' || command === 'stamp') {
+  if (perFile) {
     if (positionals.length === 0) {
       console.error(USAGE)
       return 2
@@ -84,7 +87,9 @@ async function main(argv: string[]): Promise<number> {
     for (const event of positionals) {
       try {
         if (command === 'publish') await runPublish({ event, relays }, publishDeps())
-        else await runStamp({ event, calendars }, { fetch: (url, init) => fetch(url, init), random: randomBytes, log })
+        else if (command === 'stamp') {
+          await runStamp({ event, calendars }, { fetch: (url, init) => fetch(url, init), random: randomBytes, log })
+        } else await runUpgrade({ ots: event, calendars }, { fetch: (url, init) => fetch(url, init), log })
       } catch (error) {
         log(`${event}: ${error instanceof Error ? error.message : String(error)}`)
         failed++
