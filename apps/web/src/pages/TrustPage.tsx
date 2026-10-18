@@ -79,13 +79,16 @@ export function TrustPage() {
       <form onSubmit={add} className="row">
         <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="npub1…" aria-label="Llave pública" />
         <button type="submit">Añadir ancla</button>
-        {settings.anchors !== null && (
+        {settings.anchors[cityConfig.id] !== undefined && (
           <button type="button" onClick={() => void setAnchors(null)}>
-            Volver a las raíces de la app ({cityConfig.roots.length})
+            {cityConfig.roots.length > 0 ? `Volver a las raíces de la app (${cityConfig.roots.length})` : 'Quitar mis anclas'}
           </button>
         )}
       </form>
       {error && <p className="error">{error}</p>}
+      <p className="muted small">
+        Las anclas valen solo para {cityConfig.name} (<span className="mono">{cityConfig.id}</span>): cada ciudad tiene las suyas.
+      </p>
       <p className="muted small">Compara las llaves con las que publique la ciudad por un canal oficial antes de confiar en ellas.</p>
 
       <h2>Definiciones de la ciudad</h2>
