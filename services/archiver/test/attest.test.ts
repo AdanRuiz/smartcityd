@@ -24,8 +24,8 @@ function proof(...calendars: Timestamp[]): Timestamp {
 }
 
 /** A signed snapshot event and its `.ots` next to it, with the names `archiver publish` and `stamp` give them. */
-async function stamped(ts: Timestamp, digestOf?: string) {
-  const snapshot = finalizeEvent({ kind: KIND.SNAPSHOT, tags: [['c', 'mx-gdl']], content: '{}', created_at: NOW - 86_400 }, generateSecretKey())
+async function stamped(ts: Timestamp, digestOf?: string, tags: string[][] = [['c', 'mx-gdl']]) {
+  const snapshot = finalizeEvent({ kind: KIND.SNAPSHOT, tags, content: '{}', created_at: NOW - 86_400 }, generateSecretKey())
   const dir = await mkdtemp(join(tmpdir(), 'archiver-attest-'))
   const base = join(dir, 'sc_mx-gdl_2025-10-09')
   await writeFile(`${base}.snapshot.signed.json`, JSON.stringify(snapshot))
@@ -64,7 +64,7 @@ describe('bitcoinBranch', () => {
 })
 
 describe('archiver attest (NIP-03, SNAP-7)', () => {
-  it('publishes the completed proof as kind 1040 with the e and k tags of the snapshot', async () => {
+  it('publishes the completed proof as kind 1040 with the e, k and c tags of the snapshot', async () => {
     const { snapshot, ots, signed } = await stamped(proof(via('a', bitcoin(917_200)), via('b', pending('https://b.example'))))
     const sk = generateSecretKey()
     const { post, received } = relays({ 'https://a.example': true, 'https://b.example': false })
@@ -75,7 +75,7 @@ describe('archiver attest (NIP-03, SNAP-7)', () => {
     expect(event.kind).toBe(NOSTR_KIND.OPENTIMESTAMPS)
     expect(event.pubkey).toBe(getPublicKey(sk))
     expect(event.created_at).toBe(NOW)
-    expect(event.tags).toEqual([['e', snapshot.id], ['k', String(KIND.SNAPSHOT)]])
+    expect(event.tags).toEqual([['e', snapshot.id], ['k', String(KIND.SNAPSHOT)], ['c', 'mx-gdl']])
     const published = parseDetached(Buffer.from(event.content, 'base64'))
     expect(Buffer.from(published.digest).toString('hex')).toBe(snapshot.id)
     expect(attestations(published.timestamp, published.digest).map((a) => a.attestation)).toEqual([{ type: 'bitcoin', height: 917_200 }])
@@ -105,23 +105,49 @@ describe('archiver attest (NIP-03, SNAP-7)', () => {
     await expect(runAttest({ ots, relays: ['wss://a.example'] }, deps(post, generateSecretKey()))).rejects.toThrow(/another digest/)
   })
 
-  it('signs only once: a later run resends the same event, and a copy for another proof is refused', async () => {
-    const { ots } = await stamped(proof(via('a', bitcoin(917_200))))
+  it('signs only once: a later run resends the same event, even after upgrade merged a lower block', async () => {
+    const { ots, signed } = await stamped(proof(via('a', bitcoin(917_300)), via('b', pending('https://b.example'))))
     const sk = generateSecretKey()
     const first = deps(relays({}).post, sk)
     await expect(runAttest({ ots, relays: ['wss://a.example'] }, first)).rejects.toThrow(/no relay accepted.*ots\.signed\.json/)
     expect(first.asked()).toBe(1)
+    const saved = await readFile(signed, 'utf8')
+
+    // Another calendar confirms in an earlier block after the event was signed.
+    const { digest } = parseDetached(await readFile(ots))
+    await writeFile(ots, serializeDetached(digest, proof(via('a', bitcoin(917_300)), via('b', bitcoin(917_200)))))
 
     const { post, received } = relays({ 'https://a.example': true })
     const again = deps(post, generateSecretKey(), NOW + 3600)
     const result = await runAttest({ ots, relays: ['wss://a.example'] }, again)
     expect(again.asked()).toBe(0)
     expect(result.event.pubkey).toBe(getPublicKey(sk))
-    expect(received).toHaveLength(1)
+    expect(result.height).toBe(917_300)
+    expect(received.map((r) => r.event)).toEqual([JSON.parse(saved)])
+    expect(await readFile(signed, 'utf8')).toBe(saved)
+  })
 
-    const { digest } = parseDetached(await readFile(ots))
-    await writeFile(ots, serializeDetached(digest, proof(via('b', bitcoin(917_100)))))
-    await expect(runAttest({ ots, relays: ['wss://a.example'] }, deps(post, sk))).rejects.toThrow(/remove it to sign again/)
+  it('refuses a saved copy that is not a valid signed proof of this snapshot', async () => {
+    const { ots, signed } = await stamped(proof(via('a', bitcoin(917_200))))
+    const sk = generateSecretKey()
+    const { post } = relays({ 'https://a.example': true })
+    const { event } = await runAttest({ ots, relays: ['wss://a.example'] }, deps(post, sk))
+
+    const other = parseDetached(Buffer.from(event.content, 'base64'))
+    const forged = finalizeEvent(
+      { kind: event.kind, tags: event.tags, content: Buffer.from(serializeDetached(Buffer.alloc(32, 0xab), other.timestamp)).toString('base64'), created_at: NOW },
+      sk,
+    )
+    for (const copy of [{ ...event, sig: '00'.repeat(64) }, { ...event, tags: event.tags.slice(0, 2) }, forged]) {
+      await writeFile(signed, JSON.stringify(copy))
+      await expect(runAttest({ ots, relays: ['wss://a.example'] }, deps(post, sk))).rejects.toThrow(/remove it to sign again/)
+    }
+  })
+
+  it('refuses a snapshot without a c tag', async () => {
+    const { ots } = await stamped(proof(via('a', bitcoin(1))), undefined, [])
+    const { post } = relays({ 'https://a.example': true })
+    await expect(runAttest({ ots, relays: ['wss://a.example'] }, deps(post, generateSecretKey()))).rejects.toThrow(/without a c tag/)
   })
 
   it('needs a relay and a .snapshot.ots file', async () => {

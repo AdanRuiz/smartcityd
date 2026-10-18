@@ -95,11 +95,11 @@ node dist/cli.js attest snapshots/sc_mx-gdl_2026-10-09.snapshot.ots \
   --relay wss://relay-a.example --relay wss://relay-b.example --key archivista.ncryptsec
 ```
 
-- Publica la prueba como evento kind 1040 (NIP-03; docs/spec/06, "Sello de tiempo"): tag `e` con el `id` del snapshot, `k` con `1482` y `content` = el `.ots` en base64. Lo firma la llave del archivista, como `publish`.
+- Publica la prueba como evento kind 1040 (NIP-03; docs/spec/06, "Sello de tiempo"): tag `e` con el `id` del snapshot, `k` con `1482`, `c` con su ciudad (para que los relays lo guarden y exporten con ella) y `content` = el `.ots` en base64. Lo firma la llave del archivista, como `publish`.
 - NIP-03 exige que la prueba tenga una atestación de Bitcoin, así que una prueba aún pendiente se rechaza sin pedir la llave: primero `archiver upgrade`. Por eso el paso 2 de "Sello de tiempo" (publicar la prueba pendiente) no se hace: se publica una sola vez, ya completa (paso 3).
 - Como pide NIP-03, el evento lleva solo la rama hacia el bloque más bajo, sin atestaciones pendientes; el `.ots` local no cambia.
 - Comprueba que la prueba selle el `id` del `sc_<city>_<día>[_a<N>].snapshot.signed.json` de al lado y que ese evento sea válido.
-- Firma una sola vez: guarda `sc_<city>_<día>[_a<N>].ots.signed.json` y en ejecuciones siguientes reenvía ese evento sin pedir la llave. Si la prueba cambió, se niega; se borra esa copia para firmar otra.
+- Firma una sola vez: guarda `sc_<city>_<día>[_a<N>].ots.signed.json` y en ejecuciones siguientes reenvía ese mismo evento sin pedir la llave, aunque `upgrade` haya añadido después otro bloque al `.ots`: firmar otro daría dos 1040 distintos del mismo snapshot. Si esa copia no es una prueba firmada válida de este snapshot, se niega; se borra para firmar otra.
 - Envía a todos los relays a la vez con `POST /v1/events`; sale con código 1 solo si ninguno lo aceptó.
 
 ## Desarrollo

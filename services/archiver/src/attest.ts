@@ -47,13 +47,24 @@ export function bitcoinBranch(ts: Timestamp): { height: number; timestamp: Times
   return best
 }
 
+/** The Bitcoin branch of the proof in a saved kind 1040 `content`, if it seals `id`; null if it does not parse or seal it. */
+function savedBranch(content: string, id: string): { height: number } | null {
+  try {
+    const { digest, timestamp } = parseDetached(Buffer.from(content, 'base64'))
+    return Buffer.from(digest).toString('hex') === id ? bitcoinBranch(timestamp) : null
+  } catch {
+    return null
+  }
+}
+
 /**
  * `archiver attest <file.snapshot.ots> --relay <url>… --key <ncryptsec>`: publishes the OpenTimestamps proof of a
  * `snapshot` event as kind 1040 (NIP-03; docs/spec/06, "Sello de tiempo", steps 2 and 3; SNAP-7), with the tag `e`
- * of the snapshot `id`, `k` with its kind and the `.ots` in base64 as `content`. NIP-03 requires a proof with a
- * Bitcoin attestation, so a proof that is still pending is refused: run `archiver upgrade` first. Only the branch to
- * the lowest block is kept. The proof must seal the `id` of the signed snapshot next to it. As `publish`, it signs
- * once with the archiver's key (ID-4) and later runs resend that event; a signed copy for another proof is refused.
+ * of the snapshot `id`, `k` with its kind, `c` with its city and the `.ots` in base64 as `content`. NIP-03 requires a
+ * proof with a Bitcoin attestation, so a proof that is still pending is refused: run `archiver upgrade` first. Only the
+ * branch to the lowest block is kept. The proof must seal the `id` of the signed snapshot next to it. As `publish`, it signs
+ * once with the archiver's key (ID-4) and later runs resend that event as it is, even if `upgrade` changed the `.ots`
+ * since; a saved copy that is not a valid signed proof of this snapshot is refused.
  * Whether the block really contains the commitment is `--verify`'s job.
  */
 export async function runAttest(options: AttestOptions, deps: PublishDeps): Promise<AttestResult> {
@@ -63,20 +74,30 @@ export async function runAttest(options: AttestOptions, deps: PublishDeps): Prom
   if (snapshot.kind !== KIND.SNAPSHOT) throw new Error(`${snapshotPath}: not a snapshot event (kind ${snapshot.kind})`)
   if (!verifyEvent(snapshot)) throw new Error(`${snapshotPath}: invalid id or signature`)
 
+  const city = snapshot.tags.find((t) => t[0] === 'c')?.[1]
+  if (!city) throw new Error(`${snapshotPath}: snapshot event without a c tag`)
+  // `c` lets relays store the proof under the snapshot's city, so `#c` queries and exports by city include it.
+  const tags = [['e', snapshot.id], ['k', String(KIND.SNAPSHOT)], ['c', city]]
+
   const { digest, timestamp } = parseDetached(await readFile(options.ots))
   if (Buffer.from(digest).toString('hex') !== snapshot.id) throw new Error(`${options.ots} seals another digest, not the id ${snapshot.id}`)
-  const branch = bitcoinBranch(timestamp)
-  if (!branch) throw new Error(`${options.ots}: still pending, no Bitcoin attestation yet; run archiver upgrade first`)
-  const tags = [['e', snapshot.id], ['k', String(KIND.SNAPSHOT)]]
-  const content = Buffer.from(serializeDetached(digest, branch.timestamp)).toString('base64')
 
   let event: SignedEvent
+  let height: number
   if (await exists(signed)) {
+    // Resend the saved event as it is. `upgrade` may have merged a lower block into the `.ots` since it was signed;
+    // comparing with a branch rebuilt from it would refuse the event already out and force a second, different 1040.
     event = JSON.parse(await readFile(signed, 'utf8')) as SignedEvent
-    const same = event.kind === NOSTR_KIND.OPENTIMESTAMPS && event.content === content && JSON.stringify(event.tags) === JSON.stringify(tags)
-    if (!verifyEvent(event) || !same) throw new Error(`${signed} is not a valid signature of this proof; remove it to sign again`)
-    deps.log(`${signed}: already signed, id ${event.id}`)
+    const saved = event.kind === NOSTR_KIND.OPENTIMESTAMPS && JSON.stringify(event.tags) === JSON.stringify(tags) && verifyEvent(event)
+    const branch = saved ? savedBranch(event.content, snapshot.id) : null
+    if (!branch) throw new Error(`${signed} is not a valid signed proof of this snapshot; remove it to sign again`)
+    height = branch.height
+    deps.log(`${signed}: already signed, id ${event.id}, Bitcoin block ${height}`)
   } else {
+    const branch = bitcoinBranch(timestamp)
+    if (!branch) throw new Error(`${options.ots}: still pending, no Bitcoin attestation yet; run archiver upgrade first`)
+    height = branch.height
+    const content = Buffer.from(serializeDetached(digest, branch.timestamp)).toString('base64')
     const sk = await deps.secretKey()
     try {
       const { id, pubkey, created_at, kind, tags: t, content: c, sig } = finalizeEvent(
@@ -84,12 +105,12 @@ export async function runAttest(options: AttestOptions, deps: PublishDeps): Prom
         sk,
       )
       event = { id, pubkey, created_at, kind, tags: t, content: c, sig }
-      deps.log(`${signed}: signed by ${getPublicKey(sk)}, id ${event.id}, Bitcoin block ${branch.height}`)
+      deps.log(`${signed}: signed by ${getPublicKey(sk)}, id ${event.id}, Bitcoin block ${height}`)
     } finally {
       sk.fill(0)
     }
     await writeFile(signed, JSON.stringify(event, null, 2) + '\n', { flag: 'wx' })
   }
 
-  return { event, signed, height: branch.height, ...(await broadcast(options.relays, event, signed, deps)) }
+  return { event, signed, height, ...(await broadcast(options.relays, event, signed, deps)) }
 }
