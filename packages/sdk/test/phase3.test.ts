@@ -289,4 +289,15 @@ describe('events signed elsewhere', () => {
     // A fresh client: one that already verified this id would answer with its own verified copy.
     await expect(client().send({ ...event, content: event.content.replace('Aire', 'Agua') })).rejects.toThrow(/does not verify/)
   })
+
+  it('answers both sends of the same event in flight, as a retry and the outbox do (SDK-3, SDK-4)', async () => {
+    const { client } = network([A])
+    const sc = client()
+    const event = dataset(generateSecretKey())
+    const both = Promise.all([sc.send(event), sc.send(event)])
+    const late = new Promise((_, reject) => setTimeout(() => reject(new Error('a send waits for an OK that went to the other')), 1000))
+    const results = await Promise.race([both, late]) as Awaited<typeof both>
+    expect(results.map((r) => r.accepted)).toEqual([[A], [A]])
+    sc.close()
+  })
 })
