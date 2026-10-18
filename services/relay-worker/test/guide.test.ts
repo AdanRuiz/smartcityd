@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
-import { KIND, NOSTR_KIND } from '@smartcity/schemas'
+import { KIND, NOSTR_KIND, ROLES } from '@smartcity/schemas'
+import * as nostrPow from 'nostr-tools/nip13'
 import * as nostrPure from 'nostr-tools/pure'
 import { describe, expect, it } from 'vitest'
 import { readConfig } from '../src/config.js'
@@ -10,7 +11,7 @@ import { exportDay } from '../src/export.js'
 import { handleHttp } from '../src/http.js'
 import { RateLimiter } from '../src/ratelimit.js'
 import { Store } from '../src/store.js'
-import { CITY, airDataset, deletion, key, observation, relay, sign, sqliteDb } from './helpers.js'
+import { CITY, airDataset, deletion, key, observation, relay, roles, sign, sqliteDb } from './helpers.js'
 
 // The public guides for third parties (GOAL-1) have to work as written: their scripts run here, unchanged, against
 // the HTTP API of this relay, one instance per relay URL of the guide. Line ends as written, whatever git checks out.
@@ -18,6 +19,7 @@ const guide = (name: string) =>
   readFileSync(new URL(`../../../docs/desarrolladores/${name}`, import.meta.url), 'utf8').replaceAll('\r\n', '\n')
 const GUIDE = guide('primer-dataset.md')
 const HISTORY = guide('historial.md')
+const REPORTS = guide('reportes.md')
 const MARKER = 'services/relay-worker/test/guide.test.ts'
 // Geohash of the guide's [20.6668, -103.3918] at precision 4, 5 and 6, as the SDK's encodeGeohash gives it (EVT-3).
 const G = [
@@ -36,7 +38,7 @@ function guideScript(text = GUIDE): string {
 }
 
 // The guide may only use the public library: any other import fails the test.
-const MODULES: Record<string, unknown> = { 'nostr-tools/pure': nostrPure }
+const MODULES: Record<string, unknown> = { 'nostr-tools/pure': nostrPure, 'nostr-tools/nip13': nostrPow }
 
 type Log = (...args: unknown[]) => void
 type Script = (modules: Record<string, unknown>, fetch: typeof globalThis.fetch, console: { log: Log; warn: Log }) => Promise<void>
@@ -225,5 +227,102 @@ describe('docs/desarrolladores/historial.md (GOAL-1, SNAP-6)', () => {
       `const KIND = { deletion: ${NOSTR_KIND.DELETION}, observation: ${KIND.OBSERVATION}, snapshot: ${KIND.SNAPSHOT}, dataset: ${KIND.DATASET} }`,
     )
     expect(HISTORY).toContain(`evento \`snapshot\` (kind ${KIND.SNAPSHOT})`)
+  })
+})
+
+describe('docs/desarrolladores/reportes.md (GOAL-1, PRIV-3, PRIV-5, TRUST-4)', () => {
+  /** Runs the guide with these roots; when the report reaches a relay, the city and its neighbours answer there. */
+  async function run(roots: string[], answers: (report: NostrEvent) => NostrEvent[]) {
+    const script = guideScript(REPORTS)
+    expect(script).toContain('const ROOTS = []')
+    const relays = new Map<string, ReturnType<typeof relayAt>>()
+    const post = async (host: string, event: NostrEvent) => {
+      const response = await relays.get(host)!.handle(
+        new Request(`https://${host}/v1/events`, { method: 'POST', body: JSON.stringify(event) }),
+      )
+      expect(await response!.json()).toMatchObject({ ok: true })
+    }
+    let replies: NostrEvent[] | null = null
+    const fetchStub = (async (input: string | URL | Request, init?: RequestInit) => {
+      const request = new Request(input, init)
+      const host = new URL(request.url).host
+      if (!relays.has(host)) relays.set(host, relayAt())
+      const posted = request.method === 'POST' ? ((await request.clone().json()) as NostrEvent) : null
+      const response = (await relays.get(host)!.handle(request))!
+      if (posted?.kind === KIND.REPORT && response.ok) {
+        replies ??= answers(posted)
+        for (const reply of replies) await post(host, reply)
+      }
+      return response
+    }) as typeof globalThis.fetch
+    const logged: unknown[][] = []
+    const withRoots = script.replace('const ROOTS = []', `const ROOTS = ${JSON.stringify(roots)}`)
+    await compile(withRoots)(MODULES, fetchStub, { log: (...args) => logged.push(args), warn: () => {} })
+    return { relays, logged }
+  }
+
+  function update(sk: Uint8Array, report: NostrEvent, content: object, at: number) {
+    return sign(sk, KIND.REPORT_UPDATE, [['c', CITY], ['e', report.id], ['p', report.pubkey]], { v: 1, ...content }, at)
+  }
+
+  it("publishes a report with a fresh key and proof of work, and reads its official state from the anchors' roles", async () => {
+    const [root1, root2, operator, neighbour, impostor, banned] = [key(), key(), key(), key(), key(), key()]
+    const { relays, logged } = await run([root1!.pk, root2!.pk], (report) => {
+      const t = report.created_at
+      return [
+        // One anchor attests the operator, the other blocks a key; the impostor attests itself (TRUST-4).
+        roles(root1!.sk, [[operator!.pk, 'operator']], t),
+        roles(root2!.sk, [[banned!.pk, 'blocked']], t),
+        roles(impostor!.sk, [[impostor!.pk, 'authority']], t),
+        update(operator!.sk, report, { status: 'ack', body: 'Recibido' }, t + 1),
+        update(neighbour!.sk, report, { status: 'resolved', body: 'Ya lo taparon' }, t + 2),
+        update(impostor!.sk, report, { status: 'rejected' }, t + 3),
+        update(banned!.sk, report, { body: 'Compra seguidores' }, t + 4),
+        update(root1!.sk, report, { status: 'in_progress', body: 'Cuadrilla asignada' }, t + 5),
+      ]
+    })
+
+    expect(relays.size).toBe(2)
+    const now = Math.floor(Date.now() / 1000)
+    const stored = await Promise.all([...relays.values()].map(({ store }) => store.query({ kinds: [KIND.REPORT], tags: {} }, now)))
+    expect(stored.map((events) => events.length)).toEqual([1, 1])
+    const report = stored[0]![0]!
+    expect(stored[1]![0]!.id).toBe(report.id)
+    // A key no one else uses (PRIV-5), the location rounded to 4 decimals (PRIV-3), the proof the relay asks (SPAM-1).
+    expect([root1, root2, operator, neighbour, impostor, banned].map((k) => k!.pk)).not.toContain(report.pubkey)
+    expect(JSON.parse(report.content).loc).toEqual([20.6668, -103.3918])
+    expect(report.tags).toEqual(expect.arrayContaining([['c', CITY], ['t', 'bache'], ...G]))
+    expect(nostrPow.getPow(report.id)).toBeGreaterThanOrEqual(readConfig({}).powBitsReport)
+
+    // The operator and the anchor set the state; the neighbour and the impostor only comment; the blocked key is hidden.
+    expect(logged).toEqual([
+      ['Reporte publicado:', report.id],
+      ['oficial: ack', 'Recibido'],
+      ['comentario (community)', 'Ya lo taparon'],
+      ['comentario (community)', 'rejected'],
+      ['oficial: in_progress', 'Cuadrilla asignada'],
+      ['Estado vigente: in_progress'],
+    ])
+  }, 60_000)
+
+  it('without anchors no one speaks for the city: every update is a comment and the report stays open', async () => {
+    const someone = key()
+    const { logged } = await run([], (report) => [
+      update(someone.sk, report, { status: 'resolved', body: 'Listo' }, report.created_at + 1),
+    ])
+    expect(logged.slice(1)).toEqual([['comentario (community)', 'Listo'], ['Estado vigente: open']])
+  }, 60_000)
+
+  it('names the kinds, roles and proof of work that the schemas and the relay use', () => {
+    const script = guideScript(REPORTS)
+    expect(script).toContain(
+      `const KIND = { report: ${KIND.REPORT}, report_update: ${KIND.REPORT_UPDATE}, roles: ${KIND.ROLES} }`,
+    )
+    expect(script).toContain(`const ROLES = [${ROLES.map((r) => `'${r}'`).join(', ')}]`)
+    expect(script).toContain(`const POW_BITS = ${readConfig({}).powBitsReport}`)
+    const table = Object.fromEntries(
+      [...REPORTS.matchAll(/^\| `(\w+)` \| (\d+) \|/gm)].map(([, name, kind]) => [name!, Number(kind)]),
+    )
+    expect(table).toEqual({ report: KIND.REPORT, report_update: KIND.REPORT_UPDATE, roles: KIND.ROLES })
   })
 })
