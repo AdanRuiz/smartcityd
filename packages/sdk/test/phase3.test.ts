@@ -27,10 +27,10 @@ const LIGHT_POW = { [KIND.REPORT]: 4 }
 const sign = (sk: Uint8Array, kind: number, tags: string[][], content: unknown, created_at = now()): NostrEvent =>
   finalizeEvent({ kind, tags, content: typeof content === 'string' ? content : JSON.stringify(content), created_at }, sk)
 
-const waitFor = async (test: () => boolean | Promise<boolean>, ms = 3000) => {
+const waitFor = async (test: () => boolean | Promise<boolean>, ms = 3000, state?: () => unknown) => {
   const start = Date.now()
   while (!(await test())) {
-    if (Date.now() - start > ms) throw new Error('timeout')
+    if (Date.now() - start > ms) throw new Error(`timeout${state ? `: ${JSON.stringify(await state())}` : ''}`)
     await new Promise((r) => setTimeout(r, 10))
   }
 }
@@ -65,8 +65,30 @@ describe('outbox and local store (SDK-4, GOAL-7, NFR-3)', () => {
     // While offline, what this device published is still visible to it.
     expect(await writer.datasets.list()).toHaveLength(1)
     for (const r of net.relays.values()) r.down = false
-    await waitFor(() => net.relay(A).events.length === 1 && net.relay(B).events.length === 1)
-    await waitFor(async () => (await writer.outbox.list()).length === 0)
+    const state = async () => ({
+      relays: writer.relays.status(),
+      stored: [A, B].map((url) => net.relay(url).events.map((e) => e.kind)),
+      received: [A, B].map((url) => net.relay(url).received.map((m) => m[0])),
+      outbox: (await writer.outbox.list()).map((e) => ({ attempts: e.attempts, lastError: e.lastError })),
+    })
+    await waitFor(() => net.relay(A).events.length === 1 && net.relay(B).events.length === 1, 3000, state)
+    await waitFor(async () => (await writer.outbox.list()).length === 0, 3000, state)
+    writer.close()
+  })
+
+  it('keeps sending to the relays that were still down when the outbox emptied (SDK-3)', async () => {
+    const { net, client } = network()
+    for (const r of net.relays.values()) r.down = true
+    const writer = client({ signer: localSigner(generateSecretKey()), outboxRetryMs: 60_000 })
+    expect((await writer.publish({ kind: 1, tags: [], content: 'late' })).queued).toBe(true)
+    // Let the first publish use up its own retries (10 + 20 + 40 + 80 + 160 ms): only the outbox is left.
+    await new Promise((r) => setTimeout(r, 500))
+    net.relay(A).down = false
+    await writer.outbox.flush()
+    expect(await writer.outbox.list()).toHaveLength(0)
+    expect(net.relay(B).events).toHaveLength(0)
+    net.relay(B).down = false
+    await waitFor(() => net.relay(B).events.some((e) => e.content === 'late'))
     writer.close()
   })
 
@@ -266,5 +288,16 @@ describe('events signed elsewhere', () => {
     expect(net.relay(A).events[0]!.id).toBe(event.id)
     // A fresh client: one that already verified this id would answer with its own verified copy.
     await expect(client().send({ ...event, content: event.content.replace('Aire', 'Agua') })).rejects.toThrow(/does not verify/)
+  })
+
+  it('answers both sends of the same event in flight, as a retry and the outbox do (SDK-3, SDK-4)', async () => {
+    const { client } = network([A])
+    const sc = client()
+    const event = dataset(generateSecretKey())
+    const both = Promise.all([sc.send(event), sc.send(event)])
+    const late = new Promise((_, reject) => setTimeout(() => reject(new Error('a send waits for an OK that went to the other')), 1000))
+    const results = await Promise.race([both, late]) as Awaited<typeof both>
+    expect(results.map((r) => r.accepted)).toEqual([[A], [A]])
+    sc.close()
   })
 })

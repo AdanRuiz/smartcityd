@@ -63,6 +63,7 @@ export class Relay {
   private opening: Promise<void> | null = null
   private readonly subs = new Map<string, Sub>()
   private readonly pending = new Map<string, PendingOk>()
+  private readonly sending = new Map<string, Promise<{ ok: boolean; message: string }>>()
   private failures = 0
   private reconnectTimer: unknown = null
   private closedByUser = false
@@ -176,8 +177,20 @@ export class Relay {
     } else if (type === 'NOTICE') this.update({ lastError: String(a) })
   }
 
-  /** Sends an event and resolves with the relay's `OK`. Rejects when it cannot be delivered. */
-  async publish(event: NostrEvent, timeoutMs = 10_000): Promise<{ ok: boolean; message: string }> {
+  /**
+   * Sends an event and resolves with the relay's `OK`. Rejects when it cannot be delivered. The `OK` names only the
+   * event id, so a second publish of an event still in flight (a background retry and the outbox) shares the first.
+   */
+  publish(event: NostrEvent, timeoutMs = 10_000): Promise<{ ok: boolean; message: string }> {
+    let sending = this.sending.get(event.id)
+    if (!sending) {
+      sending = this.send(event, timeoutMs).finally(() => this.sending.delete(event.id))
+      this.sending.set(event.id, sending)
+    }
+    return sending
+  }
+
+  private async send(event: NostrEvent, timeoutMs: number): Promise<{ ok: boolean; message: string }> {
     await this.connect()
     return new Promise((resolve, reject) => {
       const timer = setTimer(() => {

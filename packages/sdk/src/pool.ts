@@ -93,8 +93,9 @@ export class Pool {
   /**
    * SDK-3, REPL-1: sends to every write relay in parallel. Resolves at the first `OK`, or once every relay has
    * answered at least once without accepting. Relays that failed for a transient reason (connection, timeout,
-   * `rate-limited:`) keep retrying in the background with exponential backoff, unless `retry` is false (the
-   * outbox sends again on its own, SDK-4).
+   * `rate-limited:`) keep retrying in the background with exponential backoff. With `retry` false they retry only
+   * once some relay has accepted the event: until then the outbox sends it again on its own (SDK-4), and after
+   * that the outbox drops it, so the pool is the only one left to deliver it to the rest.
    */
   publish(event: NostrEvent, { retry = true }: { retry?: boolean } = {}): Promise<PublishResult> {
     const result: PublishResult = { id: event.id, accepted: [], rejected: [], queued: false }
@@ -103,6 +104,8 @@ export class Pool {
     return new Promise((resolve) => {
       let firstAnswers = 0
       let done = false
+      // Transient failures held while no relay has accepted (only with `retry` false).
+      const held: [Relay, number][] = []
       const finish = () => {
         if (done) return
         done = true
@@ -111,20 +114,27 @@ export class Pool {
       const answered = (attempt: number) => {
         if (attempt === 0 && ++firstAnswers === writers.length) finish()
       }
+      const transient = (relay: Relay, n: number, reason: string) => {
+        if (n + 1 >= MAX_ATTEMPTS) result.rejected.push({ relay: relay.url, reason })
+        else if (retry || result.accepted.length > 0) again(relay, n)
+        else {
+          result.rejected.push({ relay: relay.url, reason })
+          held.push([relay, n])
+        }
+      }
       const attempt = (relay: Relay, n: number) => {
         relay.publish(event).then(
           ({ ok, message }) => {
             if (ok || message.startsWith('duplicate:')) {
               result.accepted.push(relay.url)
+              for (const [r, k] of held.splice(0)) again(r, k)
               finish()
-            } else if (isPermanent(message) || !retry || n + 1 >= MAX_ATTEMPTS) {
-              result.rejected.push({ relay: relay.url, reason: message })
-            } else again(relay, n)
+            } else if (isPermanent(message)) result.rejected.push({ relay: relay.url, reason: message })
+            else transient(relay, n, message)
             answered(n)
           },
           (error: Error) => {
-            if (!retry || n + 1 >= MAX_ATTEMPTS) result.rejected.push({ relay: relay.url, reason: `error: ${error.message}` })
-            else again(relay, n)
+            transient(relay, n, `error: ${error.message}`)
             answered(n)
           },
         )

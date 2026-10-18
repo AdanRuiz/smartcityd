@@ -6,18 +6,20 @@ import { createInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
 import { decrypt } from 'nostr-tools/nip49'
 import { runAttest } from './attest.js'
+import type { Timestamp } from './ots.js'
 import { runPublish, type PublishDeps } from './publish.js'
 import { runAddendum, runSnapshot } from './snapshot.js'
 import { DEFAULT_CALENDARS, runStamp } from './stamp.js'
 import { runUpgrade } from './upgrade.js'
+import { DEFAULT_ESPLORAS, verifyFile, verifyTimestamp, type VerifyDeps } from './verify.js'
 
 const USAGE = [
   'usage: archiver snapshot|addendum --city <city> --day <YYYY-MM-DD> --relay <url> [--relay <url>…] [--out <dir>]',
   '         [--web-seed <base url>…] [--tracker <url>…] [--publish --key <ncryptsec file>]',
   '       archiver publish <file.snapshot.json>… --relay <url>… --key <ncryptsec file>',
   '       archiver stamp <file.snapshot.signed.json>… [--calendar <url>…]',
-  '       archiver upgrade <file.snapshot.ots>… [--calendar <url>…]',
-  '       archiver attest <file.snapshot.ots>… --relay <url>… --key <ncryptsec file>',
+  '       archiver upgrade <file.snapshot.ots>… [--calendar <url>…] [--verify [--esplora <url>…]]',
+  '       archiver attest <file.snapshot.ots>… --relay <url>… --key <ncryptsec file> [--verify [--esplora <url>…]]',
 ].join('\n')
 
 /** The passphrase of the key: SC_PASSPHRASE, as in `packages/sdk/scripts/city.mjs`, or asked without echo. */
@@ -68,6 +70,8 @@ async function main(argv: string[]): Promise<number> {
       publish: { type: 'boolean', default: false },
       key: { type: 'string' },
       calendar: { type: 'string', multiple: true },
+      verify: { type: 'boolean', default: false },
+      esplora: { type: 'string', multiple: true },
     },
   })
   const log = (line: string) => console.error(line)
@@ -85,14 +89,23 @@ async function main(argv: string[]): Promise<number> {
       return 2
     }
     const calendars = values.calendar ?? DEFAULT_CALENDARS
+    // `--verify` (SNAP-7): the proof must verify against Bitcoin block headers, or the file counts as failed.
+    const esploras = values.esplora ?? DEFAULT_ESPLORAS
+    const verifyDeps: VerifyDeps = { fetch: (url, init) => fetch(url, init), log }
+    const verify = values.verify
+      ? (digest: Uint8Array, timestamp: Timestamp) => verifyTimestamp(digest, timestamp, esploras, verifyDeps)
+      : undefined
     let failed = 0
     for (const event of positionals) {
       try {
         if (command === 'publish') await runPublish({ event, relays }, publishDeps())
-        else if (command === 'attest') await runAttest({ ots: event, relays }, publishDeps())
+        else if (command === 'attest') await runAttest({ ots: event, relays, verify }, publishDeps())
         else if (command === 'stamp') {
           await runStamp({ event, calendars }, { fetch: (url, init) => fetch(url, init), random: randomBytes, log })
-        } else await runUpgrade({ ots: event, calendars }, { fetch: (url, init) => fetch(url, init), log })
+        } else {
+          await runUpgrade({ ots: event, calendars }, { fetch: (url, init) => fetch(url, init), log })
+          if (values.verify) await verifyFile(event, esploras, verifyDeps)
+        }
       } catch (error) {
         log(`${event}: ${error instanceof Error ? error.message : String(error)}`)
         failed++

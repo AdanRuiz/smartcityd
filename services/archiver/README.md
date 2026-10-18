@@ -2,7 +2,7 @@
 
 CLI de snapshots. Especificación: [`docs/spec/06-distribucion-y-persistencia.md`](../../docs/spec/06-distribucion-y-persistencia.md).
 
-Estado (fase 4): arma el archivo diario, sus adendas y el evento `snapshot` sin firmar de cada uno (SNAP-1, SNAP-2, SNAP-3, SNAP-5), el `.torrent` de cada archivo con sus web seeds y su CID de IPFS, con `cid`, `magnet` y `urls` ya en el evento (DIST-1 a DIST-3), firma y publica ese evento con la llave del archivista (DIST-2) sella su `id` en los calendarios de OpenTimestamps, completa la prueba cuando confirma la transacción y la publica como kind 1040 (NIP-03) en los relays ("Sello de tiempo"). Pendientes según `09-roadmap.md`: subir el archivo a los web seeds, fijarlo en IPFS y verificar la prueba contra Bitcoin con `--verify` (SNAP-7).
+Estado (fase 4): arma el archivo diario, sus adendas y el evento `snapshot` sin firmar de cada uno (SNAP-1, SNAP-2, SNAP-3, SNAP-5), el `.torrent` de cada archivo con sus web seeds y su CID de IPFS, con `cid`, `magnet` y `urls` ya en el evento (DIST-1 a DIST-3), firma y publica ese evento con la llave del archivista (DIST-2) sella su `id` en los calendarios de OpenTimestamps, completa la prueba cuando confirma la transacción y la publica como kind 1040 (NIP-03) en los relays ("Sello de tiempo"); con `--verify` comprueba la prueba contra los encabezados de bloque de Bitcoin (SNAP-7). Pendientes según `09-roadmap.md`: subir el archivo a los web seeds y fijarlo en IPFS.
 
 Corre en la máquina del archivista o en CI, no en un Worker. Depende solo de `@smartcity/schemas`, `nostr-tools` y Node. Agregar una dependencia externa cambia `pnpm-lock.yaml`, y eso lo hace una persona, no el agente (`docs/operacion/agente.md`).
 
@@ -86,7 +86,7 @@ node dist/cli.js upgrade snapshots/sc_mx-gdl_2026-10-09.snapshot.ots
 - Solo consulta los calendarios permitidos: los de `--calendar` o, sin él, `DEFAULT_CALENDARS`. La URI de la atestación viene del archivo y no se sigue si no está en esa lista.
 - Un calendario que responde 404 aún no confirma; uno que falla o responde algo que no es una prueba se reporta y no cambia nada. Reemplaza el `.ots` (a través de un archivo temporal) solo si algo se agregó.
 - Reporta los bloques de Bitcoin que la prueba atestigua, o que sigue pendiente. Sale con código 0 en ambos casos; se repite más tarde (horas) hasta que aparezca un bloque.
-- No comprueba que el bloque contenga el compromiso: eso es la verificación (`--verify`, SNAP-7), pendiente.
+- Sin `--verify` no comprueba que el bloque contenga el compromiso; con `--verify`, después de completarla verifica la prueba contra Bitcoin (ver abajo) y sale con código 1 si no verifica o sigue pendiente.
 
 ## `archiver attest`
 
@@ -101,6 +101,19 @@ node dist/cli.js attest snapshots/sc_mx-gdl_2026-10-09.snapshot.ots \
 - Comprueba que la prueba selle el `id` del `sc_<city>_<día>[_a<N>].snapshot.signed.json` de al lado y que ese evento sea válido.
 - Firma una sola vez: guarda `sc_<city>_<día>[_a<N>].ots.signed.json` y en ejecuciones siguientes reenvía ese mismo evento sin pedir la llave, aunque `upgrade` haya añadido después otro bloque al `.ots`: firmar otro daría dos 1040 distintos del mismo snapshot. Si esa copia no es una prueba firmada válida de este snapshot, se niega; se borra para firmar otra.
 - Envía a todos los relays a la vez con `POST /v1/events`; sale con código 1 solo si ninguno lo aceptó.
+- Con `--verify`, la rama que va en el evento (la nueva o la ya firmada) debe verificar contra Bitcoin antes de pedir la llave o enviar nada.
+
+## `--verify`: la prueba contra Bitcoin
+
+```sh
+node dist/cli.js upgrade snapshots/sc_mx-gdl_2026-10-09.snapshot.ots --verify
+node dist/cli.js upgrade snapshots/sc_mx-gdl_2026-10-09.snapshot.ots --verify --esplora http://localhost:3002
+```
+
+- Verificación obligatoria de la CLI (SNAP-7), como `ots verify`: por cada atestación de Bitcoin de la prueba, el mensaje al que llegan sus operaciones desde el `id` del snapshot debe ser la raíz de Merkle del bloque de esa altura. Si lo es, el archivo existía antes de ese bloque; reporta su altura y su hora.
+- Los encabezados los pide a APIs Esplora (`GET /block-height/<altura>` y `GET /block/<hash>/header`), sin dependencias: por defecto `DEFAULT_ESPLORAS` en `src/verify.ts` (blockstream.info y mempool.space, dos operadores); `--esplora <url>` (repetible) las reemplaza. La única fuente que no exige confianza es una Esplora propia delante de un nodo Bitcoin (electrs); las públicas son una conveniencia.
+- Cada encabezado debe tener el hash que la API dio y cumplir la prueba de trabajo de su propio `nBits`, así una API no puede inventar un bloque sin minarlo. Se pregunta a todas: las que responden deben dar el mismo encabezado, y una caída solo resta.
+- Falla (código 1) si una atestación apunta a un bloque con otra raíz, si las Esplora no coinciden, si ninguna responde o si la prueba no tiene atestaciones de Bitcoin. Las atestaciones pendientes o desconocidas no cuentan.
 
 ## Desarrollo
 
