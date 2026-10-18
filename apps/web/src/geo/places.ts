@@ -10,6 +10,8 @@ export interface Place {
   /** State or region. */
   region?: string
   country?: string
+  /** ISO 3166-1 alpha-2, used for the city id of the data (EVT-1, APP-17). */
+  countryCode?: string
   lat: number
   lon: number
   /** `[minLat, minLon, maxLat, maxLon]`, as `BBox` in the SDK. */
@@ -44,7 +46,7 @@ export async function locateByIp(): Promise<Place | null> {
     const lon = num(data.longitude)
     const name = text(data.city)
     if (lat === null || lon === null || !name) return null
-    return { name, region: text(data.region), country: text(data.country), lat, lon, bbox: boxAround(lat, lon) }
+    return { name, region: text(data.region), country: text(data.country), countryCode: text(data.country_code), lat, lon, bbox: boxAround(lat, lon) }
   } catch {
     return null
   }
@@ -62,7 +64,7 @@ export function photonPlace(feature: unknown): Place | null {
     e.length === 4 && e.every((v) => v !== null)
       ? [Math.min(e[1]!, e[3]!), Math.min(e[0]!, e[2]!), Math.max(e[1]!, e[3]!), Math.max(e[0]!, e[2]!)]
       : boxAround(lat, lon)
-  return { name, region: text(p.state), country: text(p.country), lat, lon, bbox }
+  return { name, region: text(p.state), country: text(p.country), countryCode: text(p.countrycode), lat, lon, bbox }
 }
 
 /** APP-13: city at the browser's position, with the user's permission; null if denied or unavailable. */
@@ -83,7 +85,10 @@ export async function locateByBrowser(): Promise<Place | null> {
       const data = (await getJson(`${GEO.reverseUrl}?lat=${lat}&lon=${lon}&limit=1`)) as { features?: unknown[] }
       const props = ((data.features?.[0] as { properties?: Record<string, unknown> }) ?? {}).properties ?? {}
       const name = text(props.city) ?? text(props.name)
-      if (name) named = { name, region: text(props.state), country: text(props.country), lat, lon, bbox: boxAround(lat, lon) }
+      if (name) {
+        const countryCode = text(props.countrycode)
+        named = { name, region: text(props.state), country: text(props.country), countryCode, lat, lon, bbox: boxAround(lat, lon) }
+      }
     } catch {
       // keep the position without a name
     }

@@ -4,20 +4,39 @@ import { CITIES, SEED_RELAYS } from './config'
 // the app then keeps working with the embedded configuration.
 
 export interface Settings {
+  /** City of the data until the place on the map gives one (APP-17). */
   city: string
   relays: string[]
-  /** TRUST-2: anchors chosen by the user for the city; null uses the roots of the build (TRUST-1). */
-  anchors: string[] | null
+  /**
+   * TRUST-2, APP-18: anchors chosen by the user, by city id. A city without an entry uses the roots of the build
+   * (TRUST-1), or none.
+   */
+  anchors: Record<string, string[]>
 }
 
 const KEY = 'sc.settings'
 
-export const defaults = (): Settings => ({ city: CITIES[0]!.id, relays: [...SEED_RELAYS], anchors: null })
+export const defaults = (): Settings => ({ city: CITIES[0]!.id, relays: [...SEED_RELAYS], anchors: {} })
+
+const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((v) => typeof v === 'string')
+
+/** Saved settings over the defaults. Before APP-18 the anchors were one list, for the city then saved. */
+export function parseSettings(saved: unknown): Settings {
+  const base = defaults()
+  if (!saved || typeof saved !== 'object') return base
+  const s = saved as Record<string, unknown>
+  const city = typeof s.city === 'string' ? s.city : base.city
+  const relays = strings(s.relays) ? s.relays : base.relays
+  let anchors: Record<string, string[]> = {}
+  if (strings(s.anchors)) anchors = { [city]: s.anchors }
+  else if (s.anchors && typeof s.anchors === 'object')
+    anchors = Object.fromEntries(Object.entries(s.anchors).filter((e): e is [string, string[]] => strings(e[1])))
+  return { city, relays, anchors }
+}
 
 export function loadSettings(): Settings {
   try {
-    const saved = JSON.parse(localStorage.getItem(KEY) ?? 'null') as Partial<Settings> | null
-    return { ...defaults(), ...(saved ?? {}) }
+    return parseSettings(JSON.parse(localStorage.getItem(KEY) ?? 'null'))
   } catch {
     return defaults()
   }

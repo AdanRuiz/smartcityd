@@ -13,8 +13,10 @@ import {
 } from '@smartcity/sdk'
 import PowWorker from '@smartcity/sdk/pow-worker?worker&inline'
 import VerifyWorker from '@smartcity/sdk/verify-worker?worker&inline'
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, Fragment, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import { cityForPlace } from './cities'
 import { CITIES, type CityConfig } from './config'
+import { usePlace } from './geo/store'
 import type { IdentityKind } from './identity'
 import { loadSettings, saveSettings, type Settings } from './settings'
 
@@ -57,31 +59,44 @@ async function createAppClient(settings: Settings, cityConfig: CityConfig, ancho
   return new Client({ city: cityConfig.id, relays: settings.relays, trustAnchors: anchors, verifier, miner, storage })
 }
 
-const anchorsOf = (settings: Settings, cityConfig: CityConfig) => settings.anchors ?? cityConfig.roots
+/** Anchors in use for a city: the user's choice or, by default, the roots of the build (TRUST-1, TRUST-2, APP-18). */
+const anchorsOf = (settings: Settings, cityConfig: CityConfig) => settings.anchors[cityConfig.id] ?? cityConfig.roots
 
 export function ClientProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState(loadSettings)
-  const cityConfig = CITIES.find((c) => c.id === settings.city) ?? CITIES[0]!
-  const [sc, setSc] = useState<Client | null>(null)
+  const settingsRef = useRef(settings)
+  settingsRef.current = settings
+  // APP-17: the city of the data follows the place on the map; a place without a city keeps the last one.
+  const place = usePlace()
+  const lastCity = useRef<CityConfig>(CITIES.find((c) => c.id === settings.city) ?? CITIES[0]!)
+  const wanted = (place && cityForPlace(place.place)) ?? lastCity.current
+  lastCity.current = wanted
+  const [active, setActive] = useState<{ sc: Client; cityConfig: CityConfig } | null>(null)
+  const current = useRef<Client | null>(null)
+  const signer = useRef<Signer | null>(null)
   const [city, setCity] = useState<City | null>(null)
   const [identity, setIdentityState] = useState<Identity | null>(null)
   const [trustVersion, setTrustVersion] = useState(0)
 
-  // One client per page load; later settings changes are applied to it.
+  // One client per city of the data (its own local store, APP-11); the previous one closes once the new one is up.
   useEffect(() => {
-    let client: Client | null = null
     let alive = true
-    void createAppClient(settings, cityConfig, anchorsOf(settings, cityConfig)).then((c) => {
+    void createAppClient(settingsRef.current, wanted, anchorsOf(settingsRef.current, wanted)).then((c) => {
       if (!alive) return c.close()
-      client = c
-      setSc(c)
+      if (signer.current) c.setSigner(signer.current)
+      const old = current.current
+      current.current = c
+      setCity(null)
+      setActive({ sc: c, cityConfig: wanted })
+      old?.close()
     })
     return () => {
       alive = false
-      client?.close()
     }
-  }, [])
+  }, [wanted.id])
+  useEffect(() => () => current.current?.close(), [])
 
+  const sc = active?.sc ?? null
   useEffect(() => {
     if (!sc) return
     let alive = true
@@ -103,42 +118,49 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     }
   }, [sc])
 
-  if (!sc) return <div className="page muted">Abriendo almacenamiento local…</div>
+  if (!active) return <div className="page muted">Abriendo almacenamiento local…</div>
+  const { cityConfig } = active
 
   const updateSettings = (change: Partial<Settings>) => {
     const next = { ...settings, ...change }
-    for (const url of settings.relays) if (!next.relays.includes(url)) sc.relays.remove(url)
-    for (const url of next.relays) sc.relays.add(url)
+    for (const url of settings.relays) if (!next.relays.includes(url)) active.sc.relays.remove(url)
+    for (const url of next.relays) active.sc.relays.add(url)
     setSettings(next)
     saveSettings(next)
   }
 
+  /** TRUST-2, APP-18: for the city of the data only; null goes back to the roots of the build. */
   const setAnchors = async (anchors: string[] | null) => {
-    const next = { ...settings, anchors }
+    const byCity = { ...settings.anchors }
+    if (anchors === null) delete byCity[cityConfig.id]
+    else byCity[cityConfig.id] = anchors
+    const next = { ...settings, anchors: byCity }
     setSettings(next)
     saveSettings(next)
-    await sc.trust.setAnchors(anchorsOf(next, cityConfig))
-    setCity(sc.city)
+    await active.sc.trust.setAnchors(anchorsOf(next, cityConfig))
+    setCity(active.sc.city)
     setTrustVersion((v) => v + 1)
   }
 
-  const setIdentity = async (signer: Signer | null, kind: IdentityKind = 'local') => {
-    if (!signer) {
-      sc.setSigner(undefined)
+  const setIdentity = async (next: Signer | null, kind: IdentityKind = 'local') => {
+    signer.current = next
+    if (!next) {
+      active.sc.setSigner(undefined)
       setIdentityState(null)
       return
     }
-    const pubkey = await signer.getPublicKey()
-    sc.setSigner(signer)
+    const pubkey = await next.getPublicKey()
+    active.sc.setSigner(next)
     setIdentityState({ kind, pubkey })
   }
 
   const anchors = anchorsOf(settings, cityConfig)
   return (
     <Context.Provider
-      value={{ sc, settings, cityConfig, city, identity, anchors, trustVersion, updateSettings, setAnchors, setIdentity }}
+      value={{ sc: active.sc, settings, cityConfig, city, identity, anchors, trustVersion, updateSettings, setAnchors, setIdentity }}
     >
-      {children}
+      {/* A new city of the data starts every page afresh. */}
+      <Fragment key={cityConfig.id}>{children}</Fragment>
     </Context.Provider>
   )
 }

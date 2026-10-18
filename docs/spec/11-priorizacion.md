@@ -65,6 +65,7 @@ Qué se construye primero en la v1 y qué se deja fuera. El **cuándo** está en
 | `sc.archive.read` y series históricas más allá de la retención de los relays | 4 | — |
 | Build reproducible, aviso de versión nueva, pantalla "Acerca de", exportar e importar llave y ajustes | 4 | APP-6, APP-8, APP-10, APP-11 |
 | Ciudad por IP y por ubicación del navegador, búsqueda de ciudades con sugerencias, mapa base mundial de respaldo | 4 | APP-12 a APP-16 |
+| Multiciudad: la ciudad de los datos sigue a la elegida, anclas por ciudad | 4 | APP-17, APP-18 |
 | Kind `state` y caso de estacionamientos | 5 | — |
 | Espejo entre relays por suscripción (`MIRROR_FROM`) | 5 | REPL-3 |
 | Rotación automática de raíces por mayoría | 5 | TRUST-11, TRUST-12 |
@@ -123,7 +124,7 @@ Cada ID de la spec aparece una sola vez. Los números son los del ID dentro de s
 | SDK | `05` | 1–6, 9, 10 | 7, 8, 11, 12 | — |
 | GW | `05` | — | — | 1–8 |
 | DIST | `06` | 1, 2, 3 | 4 | 5 |
-| APP | `06` | 1–5, 7, 9 | 6, 8, 10–16 | — |
+| APP | `06` | 1–5, 7, 9 | 6, 8, 10–18 | — |
 | SNAP | `06` | 1, 2, 3, 5, 6, 7, 16 | 4, 8, 9 | 10–15, 17 |
 | RELAY | `07` | 1–4 | 5 | — |
 | SEC | `08` | 1, 2, 3, 5, 6 | 4 | — |
