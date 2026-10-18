@@ -13,7 +13,10 @@ export interface ReleaseInput {
   commit: string
   /** `smartcity.html` (APP-4): sha256 hex, size in bytes and HTTP(S) URLs where it can be downloaded. */
   single: ReleaseContent['single']
-  /** The multi-file `dist/`: IPFS CID and magnet with web seeds (DIST-1, DIST-3). */
+  /**
+   * The build on IPFS and BitTorrent (DIST-1, DIST-3): CID of the multi-file `dist/` and magnet of `smartcity.html`
+   * with the mirrors as web seeds, as `archiver app` computes them.
+   */
   dist?: ReleaseContent['dist']
   /** Mirrors that serve this version (GOAL-3). */
   mirrors?: string[]

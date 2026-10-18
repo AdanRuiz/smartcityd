@@ -3,12 +3,14 @@ import { createHash } from 'node:crypto'
 // IPFS CID of a file (DIST-1), computed without a node or dependency, so it can go into the `snapshot` event before
 // signing. It is the CID that `ipfs add --cid-version=1` gives with kubo's defaults: 256 KiB chunks as raw leaves,
 // balanced UnixFS tree of at most 174 links per node, sha2-256. The archivist then pins the file with that command
-// and gets the same CID (ADR-15); a file of one chunk is a single raw block (`bafkrei…`).
+// and gets the same CID (ADR-15); a file of one chunk is a single raw block (`bafkrei…`). A directory (the app
+// build, DIST-1) is the CID that `ipfs add -r --cid-version=1` gives.
 
 export const CHUNK_SIZE = 262_144
 export const MAX_LINKS = 174
 const RAW = 0x55
 const DAG_PB = 0x70
+const UNIXFS_DIRECTORY = 1
 const UNIXFS_FILE = 2
 
 interface Node {
@@ -81,6 +83,10 @@ function branch(children: Node[]): Node {
 
 /** CIDv1 (base32) of `file` as `ipfs add --cid-version=1` computes it. */
 export function fileCid(file: Uint8Array): string {
+  return cidString(fileNode(file).cid)
+}
+
+function fileNode(file: Uint8Array): Node {
   const leaves: Node[] = []
   for (let at = 0; at < file.length || at === 0; at += CHUNK_SIZE) {
     leaves.push(leaf(file.subarray(at, at + CHUNK_SIZE)))
@@ -95,5 +101,50 @@ export function fileCid(file: Uint8Array): string {
   }
   let root = leaves[0]!
   for (let depth = 1; next < leaves.length; depth++) root = branch(fill([root], depth))
-  return cidString(root.cid)
+  return root
+}
+
+interface Tree {
+  [name: string]: Tree | Uint8Array
+}
+
+/** dag-pb node whose data is a UnixFS `Directory`, with one named link per entry sorted by name, as kubo writes it. */
+function directoryNode(tree: Tree): Node {
+  const names = Object.keys(tree).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)))
+  const children = names.map((name) => {
+    const entry = tree[name]!
+    return { name, node: entry instanceof Uint8Array ? fileNode(entry) : directoryNode(entry) }
+  })
+  const links = children.map(({ name, node }) =>
+    bytesField(
+      2,
+      Buffer.concat([bytesField(1, node.cid), bytesField(2, Buffer.from(name, 'utf8')), varintField(3, node.tsize)]),
+    ),
+  )
+  const block = Buffer.concat([...links, bytesField(1, varintField(1, UNIXFS_DIRECTORY))])
+  return { cid: cidV1(DAG_PB, block), tsize: block.length + children.reduce((s, c) => s + c.node.tsize, 0), fileSize: 0 }
+}
+
+/**
+ * CIDv1 (base32) of a directory as `ipfs add -r --cid-version=1 <dir>` computes it, from its files keyed by their
+ * path relative to it with `/` as separator (`assets/app.js`). It is the CID of the directory itself, not of a
+ * wrapper, so `/ipfs/<cid>/index.html` is its `index.html`. Only basic directories: kubo shards (HAMT) a directory
+ * whose links pass about 256 KiB, thousands of entries, which an app build does not reach.
+ */
+export function directoryCid(files: ReadonlyMap<string, Uint8Array>): string {
+  const root: Tree = {}
+  for (const [path, bytes] of files) {
+    const parts = path.split('/')
+    if (parts.some((p) => p === '' || p === '.' || p === '..')) throw new Error(`not a relative file path: ${path}`)
+    let dir = root
+    for (const part of parts.slice(0, -1)) {
+      const next = (dir[part] ??= {})
+      if (next instanceof Uint8Array) throw new Error(`${path}: ${part} is a file`)
+      dir = next
+    }
+    const name = parts[parts.length - 1]!
+    if (name in dir) throw new Error(`duplicate path: ${path}`)
+    dir[name] = bytes
+  }
+  return cidString(directoryNode(root).cid)
 }
