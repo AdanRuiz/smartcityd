@@ -6,6 +6,7 @@
 
 - [AGENTS.md](AGENTS.md): convenciones, invariantes y orden de lectura para agentes de IA
 - [README.md](README.md): resumen e índice
+- [Publicar y consumir un dataset propio](docs/desarrolladores/primer-dataset.md): guía para apps de terceros, solo con `nostr-tools` y la API HTTP del relay
 
 ## Especificación
 
