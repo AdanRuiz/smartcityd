@@ -70,6 +70,22 @@ describe('outbox and local store (SDK-4, GOAL-7, NFR-3)', () => {
     writer.close()
   })
 
+  it('keeps sending to the relays that were still down when the outbox emptied (SDK-3)', async () => {
+    const { net, client } = network()
+    for (const r of net.relays.values()) r.down = true
+    const writer = client({ signer: localSigner(generateSecretKey()), outboxRetryMs: 60_000 })
+    expect((await writer.publish({ kind: 1, tags: [], content: 'late' })).queued).toBe(true)
+    // Let the first publish use up its own retries (10 + 20 + 40 + 80 + 160 ms): only the outbox is left.
+    await new Promise((r) => setTimeout(r, 500))
+    net.relay(A).down = false
+    await writer.outbox.flush()
+    expect(await writer.outbox.list()).toHaveLength(0)
+    expect(net.relay(B).events).toHaveLength(0)
+    net.relay(B).down = false
+    await waitFor(() => net.relay(B).events.some((e) => e.content === 'late'))
+    writer.close()
+  })
+
   it('does not queue what every relay rejects for good', async () => {
     const { net, client } = network()
     for (const r of net.relays.values()) r.reject = () => 'invalid: no'
