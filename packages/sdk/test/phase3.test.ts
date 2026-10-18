@@ -27,10 +27,10 @@ const LIGHT_POW = { [KIND.REPORT]: 4 }
 const sign = (sk: Uint8Array, kind: number, tags: string[][], content: unknown, created_at = now()): NostrEvent =>
   finalizeEvent({ kind, tags, content: typeof content === 'string' ? content : JSON.stringify(content), created_at }, sk)
 
-const waitFor = async (test: () => boolean | Promise<boolean>, ms = 3000) => {
+const waitFor = async (test: () => boolean | Promise<boolean>, ms = 3000, state?: () => unknown) => {
   const start = Date.now()
   while (!(await test())) {
-    if (Date.now() - start > ms) throw new Error('timeout')
+    if (Date.now() - start > ms) throw new Error(`timeout${state ? `: ${JSON.stringify(await state())}` : ''}`)
     await new Promise((r) => setTimeout(r, 10))
   }
 }
@@ -65,8 +65,14 @@ describe('outbox and local store (SDK-4, GOAL-7, NFR-3)', () => {
     // While offline, what this device published is still visible to it.
     expect(await writer.datasets.list()).toHaveLength(1)
     for (const r of net.relays.values()) r.down = false
-    await waitFor(() => net.relay(A).events.length === 1 && net.relay(B).events.length === 1)
-    await waitFor(async () => (await writer.outbox.list()).length === 0)
+    const state = async () => ({
+      relays: writer.relays.status(),
+      stored: [A, B].map((url) => net.relay(url).events.map((e) => e.kind)),
+      received: [A, B].map((url) => net.relay(url).received.map((m) => m[0])),
+      outbox: (await writer.outbox.list()).map((e) => ({ attempts: e.attempts, lastError: e.lastError })),
+    })
+    await waitFor(() => net.relay(A).events.length === 1 && net.relay(B).events.length === 1, 3000, state)
+    await waitFor(async () => (await writer.outbox.list()).length === 0, 3000, state)
     writer.close()
   })
 
