@@ -2,22 +2,29 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
-import { CSP, SINGLE_FILE, singleFileHtml } from './build/single-file'
+import { buildInfo } from './build/build-info.ts'
+import { CSP, SINGLE_FILE, singleFileHtml } from './build/single-file.ts'
+import { BUILD_META } from './src/variant.ts'
 
 /**
  * APP-2: browsers refuse module scripts from file://, so the build emits one classic script, loaded with `defer`
  * from a relative path, and adds the CSP. Only for the build: the dev server needs its inline module preamble.
+ * APP-10: also writes the build id (`BUILD_META`), which `smartcity.html` keeps, from the names of the assets: they
+ * carry the hash of their content, so the id changes with the code and stays the same for the same sources (APP-6).
  */
 function staticApp(): Plugin {
   return {
     name: 'smartcity-static-app',
     apply: 'build',
     enforce: 'post',
-    transformIndexHtml(html) {
+    transformIndexHtml(html, ctx) {
+      if (!ctx.bundle) throw new Error('static app: no bundle to take the build id from')
+      const assets = Object.keys(ctx.bundle).filter((f) => f.startsWith('assets/')).sort().join('|')
+      const id = createHash('sha256').update(assets).digest('hex').slice(0, 16)
       return html
         .replace(/<script type="module" crossorigin src="([^"]+)"><\/script>/g, '<script defer src="$1"></script>')
         .replace(/<link rel="stylesheet" crossorigin href=/g, '<link rel="stylesheet" href=')
-        .replace('<meta charset="UTF-8" />', `<meta charset="UTF-8" />\n    <meta http-equiv="Content-Security-Policy" content="${CSP.join('; ')}" />`)
+        .replace('<meta charset="UTF-8" />', `<meta charset="UTF-8" />\n    <meta http-equiv="Content-Security-Policy" content="${CSP.join('; ')}" />\n    <meta name="${BUILD_META}" content="${id}" />`)
     },
   }
 }
@@ -68,9 +75,18 @@ function singleFile(): Plugin {
   }
 }
 
+// APP-10: version and commit shown in "Acerca de".
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string }
+const info = buildInfo(pkg.version)
+
 export default defineConfig({
   base: './',
   plugins: [react(), staticApp(), serviceWorker(), singleFile()],
+  define: {
+    __APP_VERSION__: JSON.stringify(info.version),
+    __APP_COMMIT__: JSON.stringify(info.commit),
+    __APP_DIRTY__: JSON.stringify(info.dirty),
+  },
   worker: { format: 'iife' },
   build: {
     target: 'es2022',

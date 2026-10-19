@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# APP-6, APP-10: `git archive` (and GitHub source downloads) write the commit here, so a build without .git knows it
+apps/web/build/commit.txt export-subst
