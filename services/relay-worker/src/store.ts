@@ -70,6 +70,12 @@ export interface ExportPosition {
   id: string
 }
 
+/** Last line of a `received_after` page: the next one starts strictly after it. */
+export interface ReceivedPosition {
+  received_at: number
+  id: string
+}
+
 export class Store {
   constructor(private readonly db: Db) {}
 
@@ -275,6 +281,30 @@ export class Store {
     const sql = `SELECT ${COLUMNS} FROM events WHERE ${where.join(' AND ')} ORDER BY created_at ASC, id ASC LIMIT ?`
     const { results } = await this.db.prepare(sql).bind(...args).all<EventRow>()
     return (results ?? []).map(toEvent)
+  }
+
+  /**
+   * The events `exportRange` would give for a city, of any day, in the order the relay received them (`received_at`,
+   * then `id`), strictly after `after` and received no later than `upTo` (docs/spec/07, SNAP-8).
+   */
+  async exportReceived(
+    city: string,
+    after: ReceivedPosition | null,
+    upTo: number,
+    limit: number,
+  ): Promise<{ event: NostrEvent; received_at: number }[]> {
+    const where = ['city IN (?, ?)', 'received_at <= ?', ARCHIVABLE_SQL]
+    const args: unknown[] = [city, ANY_CITY, upTo]
+    if (after) {
+      where.push('(received_at > ? OR (received_at = ? AND id > ?))')
+      args.push(after.received_at, after.received_at, after.id)
+    }
+    args.push(limit)
+    const sql =
+      `SELECT ${COLUMNS}, received_at FROM events WHERE ${where.join(' AND ')} ` +
+      'ORDER BY received_at ASC, id ASC LIMIT ?'
+    const { results } = await this.db.prepare(sql).bind(...args).all<EventRow & { received_at: number }>()
+    return (results ?? []).map(({ received_at, ...row }) => ({ event: toEvent(row), received_at: Number(received_at) }))
   }
 
   /** Number of events `exportRange` would return for the whole range: what a snapshot of it must count. */
