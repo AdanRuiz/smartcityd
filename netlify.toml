@@ -1,0 +1,30 @@
+# Netlify mirror of apps/web (docs/spec/06, GOAL-3): a copy more, never a dependency (AGENTS.md, invariant 1).
+# Static build only (APP-1): no functions, no redirects (HashRouter), no runtime environment variables.
+# Same commit and build as every other mirror; apps/web/test/mirrors.test.ts checks this file.
+
+[build]
+  base = "/"
+  command = "corepack enable pnpm && pnpm install --frozen-lockfile && pnpm --filter web... build"
+  publish = "apps/web/dist"
+
+[build.environment]
+  # Node with corepack, so pnpm is the version pinned in package.json (packageManager).
+  NODE_VERSION = "22"
+
+# The Service Worker lists the files of its build (APP-7): always ask for the current one.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+# Hashed names: a new build gets new names.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Referrer-Policy = "no-referrer"
+    X-Content-Type-Options = "nosniff"
