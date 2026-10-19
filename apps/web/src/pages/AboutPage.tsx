@@ -1,30 +1,39 @@
-import { useEffect, useState } from 'react'
-import { SINGLE_FILE, loadSelfCopy, selfCopyUrl, type SelfCopy } from '../about'
+import { useEffect, useRef, useState } from 'react'
+import { isSameBuild, loadSelfCopy, selfCopyUrl, type SelfCopy } from '../about'
+import { SINGLE_FILE, isSingleFile, runningBuildId } from '../variant'
 
-type Copy = { state: 'loading' } | { state: 'ok'; copy: SelfCopy } | { state: 'error'; message: string } | { state: 'local' }
-
-const singleFile = () => document.querySelector('meta[name="smartcity-variant"]')?.getAttribute('content') === 'single-file'
+type Copy =
+  | { state: 'idle' }
+  | { state: 'loading' }
+  | { state: 'ok'; copy: SelfCopy }
+  | { state: 'stale' }
+  | { state: 'error'; message: string }
 
 /**
  * APP-10: version, commit and hash of this build, and a button that saves `smartcity.html` (APP-4). The hash is the
- * sha256 of that file, the one a signed `release` announces (DIST-2), so the user can compare both (APP-9).
+ * sha256 of that file, the one a signed `release` announces (DIST-2). It is downloaded only when asked: about 2 MB.
+ * A page cannot vouch for itself (a tampered copy can show any hash), so it says that the check that counts is
+ * `sha256sum` on the saved file against the `release` (APP-9).
  */
 export function AboutPage() {
-  const [copy, setCopy] = useState<Copy>({ state: 'loading' })
-  const single = singleFile()
-
+  const [copy, setCopy] = useState<Copy>({ state: 'idle' })
+  const single = isSingleFile()
+  const url = selfCopyUrl(location.href, single)
+  const live = useRef(true)
   useEffect(() => {
-    const url = selfCopyUrl(location.href, single)
-    if (!url) return setCopy({ state: 'local' })
-    let live = true
-    loadSelfCopy(url).then(
-      (c) => live && setCopy({ state: 'ok', copy: c }),
-      (error: unknown) => live && setCopy({ state: 'error', message: error instanceof Error ? error.message : String(error) }),
-    )
+    live.current = true
     return () => {
-      live = false
+      live.current = false
     }
-  }, [single])
+  }, [])
+
+  const load = (target: string) => {
+    setCopy({ state: 'loading' })
+    loadSelfCopy(target).then(
+      (c) => live.current && setCopy(isSameBuild(c, runningBuildId()) ? { state: 'ok', copy: c } : { state: 'stale' }),
+      (error: unknown) => live.current && setCopy({ state: 'error', message: error instanceof Error ? error.message : String(error) }),
+    )
+  }
 
   return (
     <div className="page">
@@ -41,7 +50,10 @@ export function AboutPage() {
           </tr>
           <tr>
             <th>Commit</th>
-            <td className="mono">{__APP_COMMIT__ || 'desconocido'}</td>
+            <td>
+              <span className="mono">{__APP_COMMIT__ || 'desconocido'}</span>
+              {__APP_DIRTY__ && <div className="muted small">con cambios sin commitear: el commit no describe este código</div>}
+            </td>
           </tr>
           <tr>
             <th>Variante</th>
@@ -50,27 +62,38 @@ export function AboutPage() {
           <tr>
             <th>Hash del build</th>
             <td>
-              {copy.state === 'ok' && (
-                <>
-                  <span className="mono">sha256 {copy.copy.sha256}</span>
-                  <div className="muted small">
-                    de {SINGLE_FILE}, {copy.copy.size.toLocaleString('es')} bytes
-                  </div>
-                </>
-              )}
-              {copy.state === 'loading' && 'calculando…'}
-              {copy.state === 'error' && <span className="error">No se pudo leer {SINGLE_FILE}: {copy.message}</span>}
-              {copy.state === 'local' && (
+              {!url && (
                 <span className="muted">
                   Abierta desde un archivo: el navegador no deja que la página lo lea. Calcúlalo con{' '}
                   <span className="mono">sha256sum {SINGLE_FILE}</span>.
                 </span>
               )}
+              {url && copy.state === 'idle' && (
+                <button type="button" onClick={() => load(url)}>
+                  Calcular (descarga {SINGLE_FILE}, unos 2 MB)
+                </button>
+              )}
+              {copy.state === 'loading' && 'calculando…'}
+              {copy.state === 'ok' && (
+                <>
+                  <span className="mono">sha256 {copy.copy.sha256}</span>
+                  <div className="muted small">
+                    de {SINGLE_FILE} tal como lo sirve este sitio, {copy.copy.size.toLocaleString('es')} bytes
+                  </div>
+                </>
+              )}
+              {copy.state === 'stale' && (
+                <span className="error">
+                  Este sitio ya sirve otra versión que la que tienes abierta. Recarga la página para ver la versión y el hash
+                  de la nueva.
+                </span>
+              )}
+              {copy.state === 'error' && <span className="error">No se pudo leer {SINGLE_FILE}: {copy.message}</span>}
             </td>
           </tr>
         </tbody>
       </table>
-      {copy.state !== 'local' && (
+      {url && (
         <p className="row">
           <button type="button" disabled={copy.state !== 'ok'} onClick={() => copy.state === 'ok' && save(copy.copy)}>
             Guardar copia de esta app
@@ -78,11 +101,14 @@ export function AboutPage() {
         </p>
       )}
       <p className="muted small">
-        {copy.state === 'local'
-          ? 'Esta ya es una copia local: guárdala o compártela tal cual.'
-          : `Descarga ${SINGLE_FILE}, la app entera en un solo archivo que se abre con doble clic, sin conexión al espejo.`}{' '}
-        Antes de abrir una copia que te pasaron, compara su sha256 con el del evento release firmado por los
-        desarrolladores: la app nunca se actualiza sola.
+        {url
+          ? `Descarga ${SINGLE_FILE}, la app entera en un solo archivo que se abre con doble clic, sin conexión al espejo.`
+          : single
+            ? 'Esta ya es una copia local: guárdala o compártela tal cual.'
+            : `Esta carpeta solo funciona completa: para compartir la app en un archivo, usa ${SINGLE_FILE}, que está junto a index.html.`}{' '}
+        La página calcula este hash con lo que le sirve el sitio y no puede garantizarse a sí misma: una copia alterada
+        mostraría cualquier hash. La comprobación que vale es pasar <span className="mono">sha256sum</span> al archivo
+        descargado y compararlo con el del evento release firmado por los desarrolladores. La app nunca se actualiza sola.
       </p>
     </div>
   )

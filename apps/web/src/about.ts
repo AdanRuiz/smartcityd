@@ -1,11 +1,12 @@
-/** Name of the single-file variant (APP-4); the same as `SINGLE_FILE` in build/single-file.ts. */
-export const SINGLE_FILE = 'smartcity.html'
+import { bytesToHex } from 'nostr-tools/utils'
+import { SINGLE_FILE, buildIdOf } from './variant'
 
-/** `smartcity.html` of this build: its bytes, size and sha256, the hash that the `release` announces (DIST-2). */
+/** `smartcity.html` as this origin serves it: its bytes, size, sha256 (the hash a `release` announces, DIST-2) and build id. */
 export interface SelfCopy {
   bytes: ArrayBuffer
   size: number
   sha256: string
+  build: string | null
 }
 
 /**
@@ -19,10 +20,6 @@ export function selfCopyUrl(href: string, singleFile: boolean): string | null {
   return singleFile ? url.href : new URL(`./${SINGLE_FILE}`, url).href
 }
 
-export function hex(bytes: ArrayBuffer): string {
-  return [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, '0')).join('')
-}
-
 /** Downloads `smartcity.html` and hashes it. Throws if it cannot be read or the browser has no Web Crypto. */
 export async function loadSelfCopy(
   url: string,
@@ -31,9 +28,24 @@ export async function loadSelfCopy(
   subtle: SubtleCrypto | null = globalThis.crypto?.subtle ?? null,
 ): Promise<SelfCopy> {
   if (!subtle) throw new Error('este navegador no calcula sha256 en una página sin HTTPS')
-  // no-cache: the hash is of what this origin serves now, not of an old copy in the HTTP cache.
+  // no-cache: what this origin serves now, not an old copy in the HTTP cache. It can be a newer deploy than the page
+  // that is running: `build` tells them apart.
   const res = await fetchFn(url, { cache: 'no-cache' })
   if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`)
   const bytes = await res.arrayBuffer()
-  return { bytes, size: bytes.byteLength, sha256: hex(await subtle.digest('SHA-256', bytes)) }
+  const digest = await subtle.digest('SHA-256', bytes)
+  return {
+    bytes,
+    size: bytes.byteLength,
+    sha256: bytesToHex(new Uint8Array(digest)),
+    build: buildIdOf(new TextDecoder().decode(bytes)),
+  }
+}
+
+/**
+ * Whether the downloaded copy is the build that is running. Without an id on either side (development) it cannot be
+ * told, and the copy is taken as it is.
+ */
+export function isSameBuild(copy: Pick<SelfCopy, 'build'>, running: string | null): boolean {
+  return running === null || copy.build === running
 }

@@ -1,35 +1,63 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { buildInfo } from '../build/build-info'
-import { SINGLE_FILE as BUILT } from '../build/single-file'
-import { SINGLE_FILE, loadSelfCopy, selfCopyUrl } from '../src/about'
+import { buildInfo, type Git } from '../build/build-info'
+import { SINGLE_FILE_META, singleFileHtml } from '../build/single-file'
+import { isSameBuild, loadSelfCopy, selfCopyUrl } from '../src/about'
+import { BUILD_META, buildIdOf } from '../src/variant'
 
 const SHA = 'a'.repeat(40)
 const OTHER = 'b'.repeat(40)
+const SHA256 = 'c'.repeat(64)
 
-describe('build info (APP-10)', () => {
-  it('takes the commit from git first', () => {
-    expect(buildInfo('1.2.3', { CF_PAGES_COMMIT_SHA: OTHER }, () => `${SHA}\n`)).toEqual({ version: '1.2.3', commit: SHA })
+/** A fake git: answers each command from `answers`, by its arguments. */
+const fakeGit = (answers: Record<string, string>): Git => (args) => answers[args.join(' ')]
+const repo = (head: string, status = '') =>
+  fakeGit({ 'rev-parse --show-prefix': 'apps/web/\n', 'rev-parse HEAD': `${head}\n`, 'status --porcelain --untracked-files=no': status })
+const noGit: Git = () => undefined
+const noArchive = () => undefined
+
+describe('build info (APP-10, APP-6)', () => {
+  it('takes the commit from git when the checkout is this repository', () => {
+    expect(buildInfo('1.2.3', { CF_PAGES_COMMIT_SHA: OTHER }, repo(SHA), noArchive)).toEqual({ version: '1.2.3', commit: SHA, dirty: false })
   })
 
-  it("falls back to the mirror's variables when the checkout has no git (GOAL-3)", () => {
-    const noGit = () => undefined
-    expect(buildInfo('1', { CF_PAGES_COMMIT_SHA: SHA }, noGit).commit).toBe(SHA)
-    expect(buildInfo('1', { COMMIT_REF: SHA }, noGit).commit).toBe(SHA)
-    expect(buildInfo('1', { VERCEL_GIT_COMMIT_SHA: SHA.toUpperCase() }, noGit).commit).toBe(SHA)
+  it('lets SMARTCITY_COMMIT set it by hand, before anything else', () => {
+    expect(buildInfo('1', { SMARTCITY_COMMIT: OTHER }, repo(SHA), () => SHA).commit).toBe(OTHER)
+  })
+
+  it('ignores the HEAD of another repository that encloses an unpacked tarball', () => {
+    const outer = fakeGit({ 'rev-parse --show-prefix': 'smartcity-1.0/apps/web/\n', 'rev-parse HEAD': `${OTHER}\n` })
+    expect(buildInfo('1', {}, outer, noArchive).commit).toBe('')
+    expect(buildInfo('1', {}, outer, () => `${SHA}\n`).commit).toBe(SHA)
+  })
+
+  it('takes the commit that git archive writes in build/commit.txt', () => {
+    expect(buildInfo('1', {}, noGit, () => `${SHA}\n`).commit).toBe(SHA)
+    // In a checkout the file keeps its placeholder, which is not a commit.
+    expect(buildInfo('1', {}, noGit, () => '$Format:%H$\n').commit).toBe('')
+  })
+
+  it("falls back to the mirror's variables (GOAL-3)", () => {
+    expect(buildInfo('1', { CF_PAGES_COMMIT_SHA: SHA }, noGit, noArchive).commit).toBe(SHA)
+    expect(buildInfo('1', { COMMIT_REF: SHA }, noGit, noArchive).commit).toBe(SHA)
+    expect(buildInfo('1', { VERCEL_GIT_COMMIT_SHA: SHA.toUpperCase() }, noGit, noArchive).commit).toBe(SHA)
+  })
+
+  it('accepts the 64-character commits of a SHA-256 repository', () => {
+    expect(buildInfo('1', {}, repo(SHA256), noArchive).commit).toBe(SHA256)
+  })
+
+  it('marks a build from a working tree with uncommitted changes', () => {
+    expect(buildInfo('1', {}, repo(SHA, ' M src/App.tsx\n'), noArchive)).toEqual({ version: '1', commit: SHA, dirty: true })
   })
 
   it('leaves the commit empty rather than show something that is not one', () => {
-    expect(buildInfo('1', {}, () => undefined).commit).toBe('')
-    expect(buildInfo('1', { COMMIT_REF: 'main' }, () => 'fatal: not a git repository').commit).toBe('')
+    expect(buildInfo('1', {}, noGit, noArchive).commit).toBe('')
+    expect(buildInfo('1', { COMMIT_REF: 'main', SMARTCITY_COMMIT: 'v1.0' }, noGit, noArchive).commit).toBe('')
   })
 })
 
 describe('copy of this app (APP-10, APP-4)', () => {
-  it('names the file as the build writes it', () => {
-    expect(SINGLE_FILE).toBe(BUILT)
-  })
-
   it('reads smartcity.html next to index.html, on any mirror or IPFS subpath', () => {
     expect(selfCopyUrl('https://smartcity-web.pages.dev/#/acerca', false)).toBe('https://smartcity-web.pages.dev/smartcity.html')
     expect(selfCopyUrl('https://gw.example/ipfs/bafy/index.html#/acerca', false)).toBe('https://gw.example/ipfs/bafy/smartcity.html')
@@ -45,8 +73,8 @@ describe('copy of this app (APP-10, APP-4)', () => {
     expect(selfCopyUrl('file:///home/a/dist/index.html', false)).toBeNull()
   })
 
-  it('hashes the bytes it downloads, the sha256 a release announces (DIST-2)', async () => {
-    const html = '<!doctype html><title>SmartCity</title>'
+  it('hashes the bytes it downloads, the sha256 a release announces (DIST-2), and reads their build id', async () => {
+    const html = `<!doctype html><meta name="${BUILD_META}" content="0123abcd" /><title>SmartCity</title>`
     const requests: { url: string; cache?: RequestCache }[] = []
     const fake = (async (url: string, init?: RequestInit) => {
       requests.push({ url, cache: init?.cache })
@@ -55,8 +83,31 @@ describe('copy of this app (APP-10, APP-4)', () => {
     const copy = await loadSelfCopy('https://m.example/smartcity.html', fake)
     expect(copy.sha256).toBe(createHash('sha256').update(html).digest('hex'))
     expect(copy.size).toBe(Buffer.byteLength(html))
+    expect(copy.build).toBe('0123abcd')
     expect(new TextDecoder().decode(copy.bytes)).toBe(html)
     expect(requests).toEqual([{ url: 'https://m.example/smartcity.html', cache: 'no-cache' }])
+  })
+
+  it('tells a copy from another deploy apart from the build that is running', () => {
+    expect(isSameBuild({ build: 'aaaa' }, 'aaaa')).toBe(true)
+    expect(isSameBuild({ build: 'bbbb' }, 'aaaa')).toBe(false)
+    expect(isSameBuild({ build: null }, 'aaaa')).toBe(false)
+    // Development: the page has no id.
+    expect(isSameBuild({ build: null }, null)).toBe(true)
+  })
+
+  it('keeps the build id of index.html in smartcity.html', () => {
+    const index = [
+      '<!doctype html><html><head>',
+      '<meta http-equiv="Content-Security-Policy" content="default-src \'self\'" />',
+      `<meta name="${BUILD_META}" content="feedbeef" />`,
+      '<script defer src="./assets/app.js"></script>',
+      '<link rel="stylesheet" href="./assets/style.css">',
+      '</head><body></body></html>',
+    ].join('\n')
+    const single = singleFileHtml(index, (path) => (path.endsWith('.js') ? 'void 0' : 'body{}'))
+    expect(buildIdOf(single)).toBe('feedbeef')
+    expect(single).toContain(SINGLE_FILE_META)
   })
 
   it('fails on an HTTP error or without Web Crypto', async () => {

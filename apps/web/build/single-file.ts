@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto'
+import { SINGLE_FILE, VARIANT_META } from '../src/variant'
 
-/** File name of the single-file variant (APP-4). */
-export const SINGLE_FILE = 'smartcity.html'
+export { SINGLE_FILE }
 
 /** Marks the single-file variant, so the app does not register the Service Worker (APP-4). */
-export const SINGLE_FILE_META = '<meta name="smartcity-variant" content="single-file" />'
+export const SINGLE_FILE_META = `<meta name="${VARIANT_META}" content="single-file" />`
 
 // SEC-2. `worker-src blob:` because the map, signature and proof-of-work workers start from in-memory code (works from
 // file://); 'self' for the Service Worker.
