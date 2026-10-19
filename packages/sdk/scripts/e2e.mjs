@@ -2,6 +2,7 @@
 // Uso: node scripts/e2e.mjs [wss://relay-a,wss://relay-b] [--rounds 20]
 // Publica datos de prueba (dataset `sdk-e2e`, llave desechable) en los relays indicados.
 import { KIND } from '@smartcity/schemas'
+import Table from 'cli-table3'
 import { createClient, generateSecretKey, localSigner } from '../dist/index.js'
 
 const args = process.argv.slice(2)
@@ -45,7 +46,11 @@ while (sentAt.size > 0 && Date.now() < deadline) await new Promise((r) => setTim
 latencies.sort((a, b) => a - b)
 const p = (q) => latencies[Math.min(latencies.length - 1, Math.floor(q * latencies.length))]?.toFixed(0)
 console.log(`received ${latencies.length}/${rounds}; publish→receive p50 ${p(0.5)} ms, p95 ${p(0.95)} ms, max ${p(1)} ms`)
-console.table(reader.relays.status())
+const table = new Table({ head: ['relay', 'read', 'write', 'state', 'latency', 'last error'] })
+for (const r of reader.relays.status()) {
+  table.push([r.url, r.read ? 'yes' : 'no', r.write ? 'yes' : 'no', r.state, r.latencyMs === null ? '–' : `${r.latencyMs.toFixed(0)} ms`, r.lastError ?? ''])
+}
+console.log(table.toString())
 close()
 writer.close()
 reader.close()

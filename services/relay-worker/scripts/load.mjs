@@ -2,6 +2,7 @@
 // script reports latency, size and D1 rows written per event, read from the relay's /health counters.
 // Usage: node scripts/load.mjs [relay-url] [--events 200] [--sensors 20] [--readings 60] [--concurrency 10] [--http]
 // --http publishes with POST /v1/events (runs in the Worker) instead of WebSocket (runs in the hub).
+import Table from 'cli-table3'
 import { Client, key, observation, relayUrls } from './lib.mjs'
 
 const args = process.argv.slice(2)
@@ -61,10 +62,17 @@ const after = await health()
 const sorted = latencies.sort((x, y) => x - y)
 const stored = after.stored - before.stored
 const rows = after.rowsWritten - before.rowsWritten
-console.log(`
-accepted        ${total - [...rejected.values()].reduce((a, b) => a + b, 0)} / ${total}  (${(total / elapsed).toFixed(1)} events/s)
-OK latency      p50 ${percentile(sorted, 50).toFixed(1)} ms · p95 ${percentile(sorted, 95).toFixed(1)} ms · max ${sorted.at(-1).toFixed(1)} ms
-event size      avg ${(bytes.reduce((a, b) => a + b, 0) / total / 1024).toFixed(1)} KB · ${readings} readings each
-D1 rows written ${rows} for ${stored} stored events → ${stored ? (rows / stored).toFixed(1) : '–'} rows/event
-                (counters of the hub: they reset if it is evicted during the run)`)
-for (const [message, n] of rejected) console.log(`rejected ${n}× ${message}`)
+const summary = new Table()
+summary.push(
+  { accepted: `${total - [...rejected.values()].reduce((a, b) => a + b, 0)} / ${total}  (${(total / elapsed).toFixed(1)} events/s)` },
+  { 'OK latency': `p50 ${percentile(sorted, 50).toFixed(1)} ms · p95 ${percentile(sorted, 95).toFixed(1)} ms · max ${sorted.at(-1).toFixed(1)} ms` },
+  { 'event size': `avg ${(bytes.reduce((a, b) => a + b, 0) / total / 1024).toFixed(1)} KB · ${readings} readings each` },
+  { 'D1 rows written': `${rows} for ${stored} stored events → ${stored ? (rows / stored).toFixed(1) : '–'} rows/event
+(counters of the hub: they reset if it is evicted during the run)` },
+)
+console.log(summary.toString())
+if (rejected.size > 0) {
+  const reasons = new Table({ head: ['rejected', 'reason'], colAligns: ['right', 'left'] })
+  for (const [message, n] of rejected) reasons.push([`${n}×`, message])
+  console.log(reasons.toString())
+}
