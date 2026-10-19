@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
-import { buildInfo } from './build/build-info'
-import { CSP, SINGLE_FILE, singleFileHtml } from './build/single-file'
-import { BUILD_META } from './src/variant'
+import { buildInfo } from './build/build-info.ts'
+import { CSP, SINGLE_FILE, singleFileHtml } from './build/single-file.ts'
+import { BUILD_META } from './src/variant.ts'
 
 /**
  * APP-2: browsers refuse module scripts from file://, so the build emits one classic script, loaded with `defer`

@@ -6,6 +6,8 @@
     "moduleResolution": "Bundler",
     "jsx": "react-jsx",
     "noEmit": true,
+    // vite.config.ts and build/ import with the extension, as Vite's native config loader requires.
+    "allowImportingTsExtensions": true,
     "declaration": false,
     "types": ["vite/client"]
   },

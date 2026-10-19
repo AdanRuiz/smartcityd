@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { buildInfo, type Git } from '../build/build-info'
+import { BUNDLED_PATHS, buildInfo, type Git } from '../build/build-info'
 import { SINGLE_FILE_META, singleFileHtml } from '../build/single-file'
 import { isSameBuild, loadSelfCopy, selfCopyUrl } from '../src/about'
-import { BUILD_META, buildIdOf } from '../src/variant'
+import { BUILD_META, VARIANT_META, buildIdOf, isSingleFile, runningBuildId } from '../src/variant'
 
 const SHA = 'a'.repeat(40)
 const OTHER = 'b'.repeat(40)
@@ -12,7 +12,7 @@ const SHA256 = 'c'.repeat(64)
 /** A fake git: answers each command from `answers`, by its arguments. */
 const fakeGit = (answers: Record<string, string>): Git => (args) => answers[args.join(' ')]
 const repo = (head: string, status = '') =>
-  fakeGit({ 'rev-parse --show-prefix': 'apps/web/\n', 'rev-parse HEAD': `${head}\n`, 'status --porcelain --untracked-files=no': status })
+  fakeGit({ 'rev-parse --show-prefix': 'apps/web/\n', 'rev-parse HEAD': `${head}\n`, [`status --porcelain -- ${BUNDLED_PATHS.join(' ')}`]: status })
 const noGit: Git = () => undefined
 const noArchive = () => undefined
 
@@ -47,13 +47,45 @@ describe('build info (APP-10, APP-6)', () => {
     expect(buildInfo('1', {}, repo(SHA256), noArchive).commit).toBe(SHA256)
   })
 
-  it('marks a build from a working tree with uncommitted changes', () => {
+  it('marks a build whose bundled code has uncommitted changes, new files included', () => {
     expect(buildInfo('1', {}, repo(SHA, ' M src/App.tsx\n'), noArchive)).toEqual({ version: '1', commit: SHA, dirty: true })
+    expect(buildInfo('1', {}, repo(SHA, '?? src/new.ts\n'), noArchive).dirty).toBe(true)
+  })
+
+  it('looks only at what goes into the bundle: the app and the workspace packages', () => {
+    expect(BUNDLED_PATHS).toEqual(['.', '../../packages'])
   })
 
   it('leaves the commit empty rather than show something that is not one', () => {
     expect(buildInfo('1', {}, noGit, noArchive).commit).toBe('')
     expect(buildInfo('1', { COMMIT_REF: 'main', SMARTCITY_COMMIT: 'v1.0' }, noGit, noArchive).commit).toBe('')
+  })
+})
+
+/** A document with these `<meta name content>`, enough for the functions that read them. */
+const docWith = (metas: Record<string, string>) => ({
+  querySelector: (selector: string) => {
+    const name = /^meta\[name="([^"]+)"\]$/.exec(selector)?.[1]
+    const content = name === undefined ? undefined : metas[name]
+    return content === undefined ? null : ({ getAttribute: (attr: string) => (attr === 'content' ? content : null) } as Element)
+  },
+})
+
+describe('variant and build id of the running page (APP-4, APP-10)', () => {
+  it('knows the single file by its meta', () => {
+    expect(isSingleFile(docWith({ [VARIANT_META]: 'single-file' }))).toBe(true)
+    expect(isSingleFile(docWith({ [VARIANT_META]: 'other' }))).toBe(false)
+    expect(isSingleFile(docWith({}))).toBe(false)
+  })
+
+  it('reads the build id, or null in development', () => {
+    expect(runningBuildId(docWith({ [BUILD_META]: '6e60d86824fd7ff3' }))).toBe('6e60d86824fd7ff3')
+    expect(runningBuildId(docWith({}))).toBeNull()
+  })
+
+  it('reads the build id from the HTML of the build', () => {
+    expect(buildIdOf(`<meta charset="UTF-8" />\n    <meta name="${BUILD_META}" content="6e60d86824fd7ff3" />`)).toBe('6e60d86824fd7ff3')
+    expect(buildIdOf('<!doctype html><title>x</title>')).toBeNull()
   })
 })
 

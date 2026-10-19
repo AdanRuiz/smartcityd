@@ -7,7 +7,10 @@ export interface BuildInfo {
   version: string
   /** Git commit the build was made from, 40 or 64 hex characters (SHA-1 or SHA-256 repository), or '' if unknown. */
   commit: string
-  /** The working tree had uncommitted changes to tracked files: the commit does not describe the code. */
+  /**
+   * The code that goes into the bundle (apps/web and packages/) had uncommitted changes, new files not yet added to
+   * git included: the commit does not describe the code. Files ignored by .gitignore, such as dist/, do not count.
+   */
   dirty: boolean
 }
 
@@ -24,6 +27,9 @@ const COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
 
 // Where apps/web sits in this repository, as `git rev-parse --show-prefix` prints it from there.
 const PREFIX = 'apps/web/'
+
+// What goes into the bundle, relative to apps/web: the app and the workspace packages it imports.
+export const BUNDLED_PATHS = ['.', '../../packages'] as const
 
 const appDir = fileURLToPath(new URL('..', import.meta.url))
 
@@ -70,7 +76,7 @@ export function buildInfo(
   if (git(['rev-parse', '--show-prefix'])?.trim() === PREFIX) {
     const head = valid(git(['rev-parse', 'HEAD']))
     if (head) {
-      const status = git(['status', '--porcelain', '--untracked-files=no'])
+      const status = git(['status', '--porcelain', '--', ...BUNDLED_PATHS])
       return { version, commit: head, dirty: status !== undefined && status.trim() !== '' }
     }
   }

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { SINGLE_FILE, VARIANT_META } from '../src/variant'
+import { SINGLE_FILE, VARIANT_META } from '../src/variant.ts'
 
 export { SINGLE_FILE }
 
