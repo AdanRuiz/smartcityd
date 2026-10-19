@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import { KIND, NOSTR_KIND } from '@smartcity/schemas'
 import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   Client,
   createClient,
@@ -129,6 +129,106 @@ describe('outbox and local store (SDK-4, GOAL-7, NFR-3)', () => {
     await waitFor(() => net.relay(A).events.some((e) => e.content === 'offline'))
     await waitFor(async () => (await after.outbox.list()).length === 0)
     after.close()
+  })
+})
+
+describe('signing the outbox again when a relay finds it too old (SDK-12, RELAY-5)', () => {
+  // As the reference relay with its default limit of 30 days (MAX_EVENT_AGE_DAYS).
+  const DAY = 86_400
+  const ageLimit = () => (e: NostrEvent) => (e.created_at < now() - 30 * DAY ? 'invalid: too old' : null)
+  /** Runs `fn` with the clock 40 days back, as a device that was offline that long. */
+  const fortyDaysAgo = async <T,>(fn: () => Promise<T>): Promise<T> => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(Date.now() - 40 * DAY * 1000)
+    try {
+      return await fn()
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+
+  it('signs a queued disposable report again with the same key, its proof of work and the date of now', async () => {
+    const { net, client } = network()
+    for (const r of net.relays.values()) {
+      r.down = true
+      r.reject = ageLimit()
+    }
+    const writer = client()
+    const first = await fortyDaysAgo(() => writer.reports.create({ category: 'bache', title: 'Bache', loc: SPOT }))
+    expect(first.queued).toBe(true)
+    // SEC-3: the outbox shows the event, never the key kept for it.
+    expect((await writer.outbox.list())[0]).not.toHaveProperty('key')
+    for (const r of net.relays.values()) r.down = false
+    await waitFor(() => net.relay(A).events.length === 1 && net.relay(B).events.length === 1)
+    const sent = net.relay(A).events[0]!
+    expect(sent.id).not.toBe(first.id)
+    expect(sent.pubkey).toBe(first.pubkey)
+    expect(sent.kind).toBe(KIND.REPORT)
+    expect(sent.created_at).toBeGreaterThan(now() - 60)
+    expect(JSON.parse(sent.content)).toMatchObject({ title: 'Bache' })
+    expect(getPow(sent.id)).toBeGreaterThanOrEqual(LIGHT_POW[KIND.REPORT])
+    await waitFor(async () => (await writer.outbox.list()).length === 0)
+    // The local view keeps one copy: the old one is gone.
+    const mine = await writer.reports.query()
+    expect(mine.map((r) => r.id)).toEqual([sent.id])
+    writer.close()
+  })
+
+  it('keeps the disposable key sealed in IndexedDB across sessions, and signs again in the next one', async () => {
+    const { net, urls } = network()
+    for (const r of net.relays.values()) {
+      r.down = true
+      r.reject = ageLimit()
+    }
+    const name = `test-${Math.random()}`
+    const opts = { city: CITY, relays: urls, WebSocket: net.WebSocket, queryTimeoutMs: 200, retryBaseMs: 10, outboxRetryMs: 50, pow: LIGHT_POW }
+    const store = await indexedDbStore(name)
+    const before = await createClient({ ...opts, storage: store })
+    const first = await fortyDaysAgo(() => before.reports.create({ category: 'bache', title: 'Bache', loc: SPOT }))
+    expect(first.queued).toBe(true)
+    // ID-2: at rest the key is ciphertext under a key that cannot be exported.
+    const [entry] = await store.outboxList()
+    expect(entry?.key).toMatchObject({ iv: expect.any(Uint8Array), data: expect.any(Uint8Array) })
+    expect(entry?.key).not.toHaveProperty('memory')
+    before.close()
+    for (const r of net.relays.values()) r.down = false
+    const after = await createClient({ ...opts, storage: await indexedDbStore(name) })
+    await waitFor(() => net.relay(A).events.some((e) => e.kind === KIND.REPORT && e.pubkey === first.pubkey))
+    await waitFor(async () => (await after.outbox.list()).length === 0)
+    after.close()
+  })
+
+  it('signs again with the client signer when it is the author, and gives up when it is not', async () => {
+    const { net, client } = network()
+    for (const r of net.relays.values()) {
+      r.down = true
+      r.reject = ageLimit()
+    }
+    const old = now() - 40 * DAY
+    const sk = generateSecretKey()
+    const store = memoryStore()
+    const writer = client({ signer: localSigner(sk), storage: store, outboxRetryMs: 60_000 })
+    expect((await writer.publish({ kind: 1, tags: [], content: 'late', created_at: old })).queued).toBe(true)
+    writer.close()
+    for (const r of net.relays.values()) r.down = false
+    // Another key opens the same outbox: it cannot sign for the author, so the relays' answer stands.
+    const other = client({ signer: localSigner(generateSecretKey()), storage: store, outboxRetryMs: 60_000 })
+    await other.outbox.flush()
+    expect(other.outbox.rejected().map((r) => r.reason)).toEqual(['invalid: too old'])
+    expect(net.relay(A).events).toHaveLength(0)
+    other.close()
+
+    for (const r of net.relays.values()) r.down = true
+    const again = client({ signer: localSigner(sk), storage: store, outboxRetryMs: 60_000 })
+    const queued = await again.publish({ kind: 1, tags: [], content: 'later', created_at: old })
+    expect(queued.queued).toBe(true)
+    for (const r of net.relays.values()) r.down = false
+    await again.outbox.flush()
+    expect(await again.outbox.list()).toHaveLength(0)
+    const sent = net.relay(A).events.find((e) => e.content === 'later')
+    expect(sent?.pubkey).toBe(getPublicKey(sk))
+    expect(sent?.created_at).toBeGreaterThan(now() - 60)
+    again.close()
   })
 })
 

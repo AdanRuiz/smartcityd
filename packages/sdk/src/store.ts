@@ -10,7 +10,15 @@ export interface OutboxEntry {
   queuedAt: number
   attempts: number
   lastError: string | null
+  /**
+   * The disposable key that signed it (PRIV-5), sealed by the store, so it can be signed again if a relay finds it
+   * too old (SDK-12). Kept only until a relay accepts the event.
+   */
+  key?: SealedKey
 }
+
+/** A secret key as the store keeps it at rest: encrypted, or in memory only. Opaque outside the store. */
+export type SealedKey = { iv: Uint8Array; data: Uint8Array } | { memory: Uint8Array }
 
 /**
  * Local store (GOAL-7, NFR-3): verified events already seen, so the app keeps showing them without relays, and the
@@ -19,6 +27,14 @@ export interface OutboxEntry {
 export interface Store {
   put(events: NostrEvent[]): Promise<void>
   query(filters: Filter[]): Promise<NostrEvent[]>
+  /** Drops events from the local view: one this device replaced by signing it again (SDK-12). */
+  forget(ids: string[]): Promise<void>
+  /**
+   * Seals a secret key for the outbox (ID-2: never in clear at rest). Null when this store cannot keep it safely;
+   * the event is then queued without it and cannot be signed again.
+   */
+  sealKey(secretKey: Uint8Array): Promise<SealedKey | null>
+  openKey(sealed: SealedKey): Promise<Uint8Array | null>
   outboxAdd(entry: OutboxEntry): Promise<void>
   outboxRemove(id: string): Promise<void>
   outboxList(): Promise<OutboxEntry[]>
@@ -51,6 +67,10 @@ export function memoryStore(maxEvents = DEFAULT_MAX_EVENTS): Store {
       }
     },
     query: async (filters) => applyLimits(filters, [...events.values()].filter((e) => matchesAny(filters, e))),
+    forget: async (ids) => ids.forEach((id) => events.delete(id)),
+    // Nothing of this store reaches the disk.
+    sealKey: async (secretKey) => ({ memory: secretKey.slice() }),
+    openKey: async (sealed) => ('memory' in sealed ? sealed.memory.slice() : null),
     outboxAdd: async (entry) => void outbox.set(entry.event.id, entry),
     outboxRemove: async (id) => void outbox.delete(id),
     outboxList: async () => [...outbox.values()].sort((a, b) => a.queuedAt - b.queuedAt),
@@ -125,6 +145,20 @@ function done(tx: IdbTransaction): Promise<void> {
 
 const EVENTS = 'events'
 const OUTBOX = 'outbox'
+const KEYS = 'keys'
+const SEAL_KEY_ID = 'outbox-seal'
+
+// WebCrypto, declared as narrowly as it is used (SDK-9).
+interface SubtleLike {
+  generateKey(algorithm: { name: string; length: number }, extractable: boolean, usages: string[]): Promise<unknown>
+  encrypt(algorithm: { name: string; iv: Uint8Array }, key: unknown, data: Uint8Array): Promise<ArrayBuffer>
+  decrypt(algorithm: { name: string; iv: Uint8Array }, key: unknown, data: Uint8Array): Promise<ArrayBuffer>
+}
+interface CryptoLike {
+  subtle?: SubtleLike
+  getRandomValues(array: Uint8Array): Uint8Array
+}
+const webCrypto = (): CryptoLike | undefined => (globalThis as { crypto?: CryptoLike }).crypto
 
 /**
  * Store in the browser's IndexedDB (SDK-4). One database per city, in the origin of the page: a different mirror or
@@ -133,7 +167,7 @@ const OUTBOX = 'outbox'
 export async function indexedDbStore(name: string, maxEvents = DEFAULT_MAX_EVENTS): Promise<Store> {
   const factory = (globalThis as { indexedDB?: IdbFactory }).indexedDB
   if (!factory) return memoryStore(maxEvents)
-  const open = factory.open(name, 1)
+  const open = factory.open(name, 2)
   open.onupgradeneeded = () => {
     const db = open.result
     if (!db.objectStoreNames.contains(EVENTS)) {
@@ -142,6 +176,8 @@ export async function indexedDbStore(name: string, maxEvents = DEFAULT_MAX_EVENT
       events.createIndex('created_at', 'created_at')
     }
     if (!db.objectStoreNames.contains(OUTBOX)) db.createObjectStore(OUTBOX, { keyPath: 'event.id' })
+    // Version 2: the AES key that seals disposable keys waiting in the outbox (SDK-12).
+    if (!db.objectStoreNames.contains(KEYS)) db.createObjectStore(KEYS, { keyPath: 'id' })
   }
   let db: IdbDatabase
   try {
@@ -150,6 +186,25 @@ export async function indexedDbStore(name: string, maxEvents = DEFAULT_MAX_EVENT
     return memoryStore(maxEvents)
   }
   let lastPrune = 0
+
+  // ID-2: a disposable key at rest is encrypted with an AES-GCM `CryptoKey` that cannot be exported; IndexedDB
+  // keeps the key object itself, never its bytes. Without WebCrypto (an insecure origin) nothing is sealed.
+  let sealing: Promise<unknown> | null = null
+  const sealingKey = (subtle: SubtleLike): Promise<unknown> =>
+    (sealing ??= (async () => {
+      const found = (await request(db.transaction([KEYS], 'readonly').objectStore(KEYS).get(SEAL_KEY_ID))) as
+        | { key: unknown }
+        | undefined
+      if (found) return found.key
+      const key = await subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
+      const tx = db.transaction([KEYS], 'readwrite')
+      tx.objectStore(KEYS).put({ id: SEAL_KEY_ID, key })
+      await done(tx)
+      return key
+    })().catch((err: unknown) => {
+      sealing = null
+      throw err
+    }))
 
   const prune = async () => {
     if (Date.now() - lastPrune < 60_000) return
@@ -200,6 +255,32 @@ export async function indexedDbStore(name: string, maxEvents = DEFAULT_MAX_EVENT
         }
       }
       return applyLimits(filters, [...found.values()])
+    },
+    forget: async (ids) => {
+      if (ids.length === 0) return
+      const tx = db.transaction([EVENTS], 'readwrite')
+      for (const id of ids) tx.objectStore(EVENTS).delete(id)
+      await done(tx)
+    },
+    sealKey: async (secretKey) => {
+      const crypto = webCrypto()
+      if (!crypto?.subtle) return null
+      try {
+        const iv = crypto.getRandomValues(new Uint8Array(12))
+        const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await sealingKey(crypto.subtle), secretKey)
+        return { iv, data: new Uint8Array(data) }
+      } catch {
+        return null
+      }
+    },
+    openKey: async (sealed) => {
+      const subtle = webCrypto()?.subtle
+      if (!subtle || !('iv' in sealed)) return null
+      try {
+        return new Uint8Array(await subtle.decrypt({ name: 'AES-GCM', iv: sealed.iv }, await sealingKey(subtle), sealed.data))
+      } catch {
+        return null
+      }
     },
     outboxAdd: async (entry) => {
       const tx = db.transaction([OUTBOX], 'readwrite')
