@@ -7,6 +7,8 @@
 - [AGENTS.md](AGENTS.md): convenciones, invariantes y orden de lectura para agentes de IA
 - [README.md](README.md): resumen e índice
 - [Publicar y consumir un dataset propio](docs/desarrolladores/primer-dataset.md): guía para apps de terceros, solo con `nostr-tools` y la API HTTP del relay
+- [Leer el historial desde los snapshots](docs/desarrolladores/historial.md): encontrar, descargar y verificar los archivos diarios de una ciudad
+- [Reportes ciudadanos y en quién confiar](docs/desarrolladores/reportes.md): reporte con llave desechable y prueba de trabajo, roles de las anclas y estado oficial
 
 ## Especificación
 
