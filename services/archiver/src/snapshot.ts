@@ -50,7 +50,7 @@ export interface Files {
 }
 
 /** Paths of a day's file and of its `snapshot` event: the daily with `n` 0, addendum `n` otherwise (SNAP-2). */
-function paths(out: string, city: string, day: string, n: number): Files {
+export function paths(out: string, city: string, day: string, n: number): Files {
   const base = join(out, n === 0 ? `sc_${city}_${day}` : `sc_${city}_${day}_a${n}`)
   return { archive: `${base}.ndjson.gz`, torrent: `${base}.ndjson.gz.torrent`, event: `${base}.snapshot.json` }
 }
@@ -116,7 +116,7 @@ function distribute(snapshot: DailySnapshot, options: SnapshotOptions) {
   return torrent
 }
 
-async function write(files: Files, snapshot: DailySnapshot, options: SnapshotOptions, log: (line: string) => void) {
+export async function write(files: Files, snapshot: DailySnapshot, options: SnapshotOptions, log: (line: string) => void) {
   const torrent = distribute(snapshot, options)
   await mkdir(options.out, { recursive: true })
   await writeFile(files.archive, snapshot.gzip, { flag: 'wx' })
@@ -162,22 +162,7 @@ export async function runAddendum(options: SnapshotOptions, deps: SnapshotDeps):
   if (!(await exists(paths(options.out, options.city, options.day, 0).archive))) {
     throw new Error(`no daily file of ${options.day} in ${options.out}: run archiver snapshot first (SNAP-2)`)
   }
-  const archived = new Set<string>()
-  // Deletions already archived keep applying even if the relay that knew them is no longer read (SNAP-3).
-  const archivedDeletions: unknown[] = []
-  let n = 0
-  for (;;) {
-    const files = paths(options.out, options.city, options.day, n)
-    if (n > 0 && !(await exists(files.archive))) break
-    for (const event of await readPublished(files)) {
-      archived.add(event.id)
-      if (event.kind === NOSTR_KIND.DELETION) archivedDeletions.push(event)
-    }
-    n++
-  }
-  const files = paths(options.out, options.city, options.day, n)
-  if (await exists(files.event)) throw new Error(`${files.event} already exists: published files are not rewritten (SNAP-2)`)
-
+  const { archived, archivedDeletions, n, files } = await publishedDay(options.out, options.city, options.day)
   const { events, deletions, read, failed } = await readRelays(options, range.from, deps)
   const snapshot = buildAddendum({
     city: options.city,
@@ -196,6 +181,29 @@ export async function runAddendum(options: SnapshotOptions, deps: SnapshotDeps):
   }
   await write(files, snapshot, options, deps.log)
   return { snapshot, files, failed }
+}
+
+/**
+ * What the published files of a day already hold, the daily and its addenda, each checked against its `x`
+ * (SNAP-6), and the paths of addendum `n`, the next one. Throws if that addendum's event already exists.
+ */
+export async function publishedDay(out: string, city: string, day: string) {
+  const archived = new Set<string>()
+  // Deletions already archived keep applying even if the relay that knew them is no longer read (SNAP-3).
+  const archivedDeletions: unknown[] = []
+  let n = 0
+  for (;;) {
+    const files = paths(out, city, day, n)
+    if (n > 0 && !(await exists(files.archive))) break
+    for (const event of await readPublished(files)) {
+      archived.add(event.id)
+      if (event.kind === NOSTR_KIND.DELETION) archivedDeletions.push(event)
+    }
+    n++
+  }
+  const files = paths(out, city, day, n)
+  if (await exists(files.event)) throw new Error(`${files.event} already exists: published files are not rewritten (SNAP-2)`)
+  return { archived, archivedDeletions, n, files }
 }
 
 const sha256 = (data: string | Uint8Array) => createHash('sha256').update(data).digest('hex')
