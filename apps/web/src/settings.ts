@@ -14,7 +14,7 @@ export interface Settings {
   anchors: Record<string, string[]>
 }
 
-const KEY = 'sc.settings'
+export const SETTINGS_KEY = 'sc.settings'
 
 export const defaults = (): Settings => ({ city: CITIES[0]!.id, relays: [...SEED_RELAYS], anchors: {} })
 
@@ -36,7 +36,7 @@ export function parseSettings(saved: unknown): Settings {
 
 export function loadSettings(): Settings {
   try {
-    return parseSettings(JSON.parse(localStorage.getItem(KEY) ?? 'null'))
+    return parseSettings(JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null'))
   } catch {
     return defaults()
   }
@@ -44,7 +44,7 @@ export function loadSettings(): Settings {
 
 export function saveSettings(settings: Settings): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(settings))
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
   } catch {
     // not persisted; the change still applies to this session
   }

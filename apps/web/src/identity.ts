@@ -2,18 +2,18 @@ import { decryptSecretKey, encryptSecretKey, generateSecretKey, localSigner, nip
 import { readItem, writeItem } from './settings'
 
 // ID-2: the local key is kept only as NIP-49 `ncryptsec` (encrypted with the user's passphrase), never in clear.
-const KEY = 'sc.ncryptsec'
+export const KEY_ITEM = 'sc.ncryptsec'
 
 export type IdentityKind = 'nip07' | 'local'
 
-export const storedKey = (): string | null => readItem(KEY)
+export const storedKey = (): string | null => readItem(KEY_ITEM)
 
 export function createLocalKey(passphrase: string): { signer: Signer; ncryptsec: string; persisted: boolean } {
   const sk = generateSecretKey()
   const ncryptsec = encryptSecretKey(sk, passphrase)
   const signer = localSigner(sk)
   sk.fill(0)
-  return { signer, ncryptsec, persisted: writeItem(KEY, ncryptsec) }
+  return { signer, ncryptsec, persisted: writeItem(KEY_ITEM,ncryptsec) }
 }
 
 /** Throws when the passphrase is wrong. */
@@ -27,10 +27,10 @@ export function unlockLocalKey(passphrase: string, ncryptsec = storedKey()): Sig
 
 export function importLocalKey(ncryptsec: string, passphrase: string): Signer {
   const signer = unlockLocalKey(passphrase, ncryptsec)
-  writeItem(KEY, ncryptsec.trim())
+  writeItem(KEY_ITEM,ncryptsec.trim())
   return signer
 }
 
-export const forgetLocalKey = (): boolean => writeItem(KEY, null)
+export const forgetLocalKey = (): boolean => writeItem(KEY_ITEM,null)
 
 export const extensionSigner = nip07Signer

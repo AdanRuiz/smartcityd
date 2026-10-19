@@ -1,5 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { isSameBuild, loadSelfCopy, selfCopyUrl, type SelfCopy } from '../about'
+import { applyBackup, BACKUP_FILE, backupText, parseBackup } from '../backup'
+import { useApp } from '../client'
+import { getPlace } from '../geo/store'
+import { storedKey } from '../identity'
 import { SINGLE_FILE, isSingleFile, runningBuildId } from '../variant'
 
 type Copy =
@@ -110,7 +114,78 @@ export function AboutPage() {
         mostraría cualquier hash. La comprobación que vale es pasar <span className="mono">sha256sum</span> al archivo
         descargado y compararlo con el del evento release firmado por los desarrolladores. La app nunca se actualiza sola.
       </p>
+      <BackupSection />
     </div>
+  )
+}
+
+/**
+ * APP-11: each mirror, IPFS gateway or local file keeps its own data, so a copy opened elsewhere starts empty. The
+ * backup file takes settings, chosen city and the encrypted key to it; the import applies on reload.
+ */
+function BackupSection() {
+  const { settings } = useApp()
+  const picker = useRef<HTMLInputElement>(null)
+  const [message, setMessage] = useState<{ error: boolean; text: string; reload?: boolean } | null>(null)
+
+  const exportFile = () => {
+    const text = backupText({ settings, place: getPlace(), ncryptsec: storedKey() })
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = BACKUP_FILE
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+
+  const importFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    let result: ReturnType<typeof applyBackup>
+    try {
+      result = applyBackup(parseBackup(await file.text()))
+    } catch (error) {
+      return setMessage({ error: true, text: `No se pudo importar: ${error instanceof Error ? error.message : String(error)}.` })
+    }
+    if (!result.saved) return setMessage({ error: true, text: 'Este navegador no deja que la app guarde datos aquí: no se cambió nada.' })
+    const key = {
+      none: '',
+      imported: ' La llave cifrada quedó guardada: desbloquéala en Identidad con tu frase.',
+      same: ' La llave de la copia es la que ya tenías.',
+      kept: ' La llave de la copia no se importó porque aquí ya hay otra; bórrala en Identidad (con una copia) si quieres cambiarla.',
+    }[result.key]
+    setMessage({ error: result.key === 'kept', text: `Ajustes importados; se aplican al recargar.${key}`, reload: true })
+  }
+
+  return (
+    <section>
+      <h2>Llevar tus ajustes a otra copia</h2>
+      <p className="muted small">
+        Cada espejo, gateway IPFS o archivo abierto en tu equipo guarda sus datos aparte. Para usar tus relays, anclas,
+        ciudad elegida y llave en otra copia, descarga tus ajustes aquí y ábrelos allí. La llave va cifrada con tu frase
+        (ncryptsec), nunca en claro, y el archivo no sale de tu equipo salvo que tú lo envíes.
+      </p>
+      <div className="row">
+        <button type="button" onClick={exportFile}>
+          Descargar ajustes
+        </button>
+        <button type="button" onClick={() => picker.current?.click()}>
+          Importar ajustes
+        </button>
+        <input ref={picker} type="file" accept="application/json,.json" hidden onChange={(e) => void importFile(e)} />
+      </div>
+      {message && (
+        <p className={message.error ? 'error' : 'ok'}>
+          {message.text}{' '}
+          {message.reload && (
+            <button type="button" onClick={() => location.reload()}>
+              Recargar ahora
+            </button>
+          )}
+        </p>
+      )}
+    </section>
   )
 }
 
