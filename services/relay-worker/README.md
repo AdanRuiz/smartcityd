@@ -4,7 +4,7 @@ Relay de referencia sobre Cloudflare Workers + Durable Objects + D1. Especificac
 
 Estado (fase 3): WebSocket NIP-01 con hibernación, aceptación de eventos (pasos 1 a 9 de `07`), prueba de trabajo para `report` de llaves sin rol, `WRITE_POLICY=roles`, reemplazo de direccionables (DATA-3), borrado kind 5 (DATA-8), efímeros sin almacenar, expiración NIP-40, `POST`/`GET /v1/events`, NIP-11 y `/health`. Fase 4: `GET /v1/export?c=<city>&day=<YYYY-MM-DD>`, el NDJSON canónico del día (`06`), y `GET /v1/export?c=<city>&received_after=<cursor>`, lo mismo en el orden en que el relay lo recibió (SNAP-8), retención diaria por Cron Trigger condicionada a que el día esté archivado (RELAY-4), e importación de snapshots sin contactar a otro relay (NFR-4, RELAY-5, SNAP-6).
 
-Pendiente según `09-roadmap.md`: que el archivista use `received_after` (SNAP-8; hay que volver a desplegar el relay para que la ruta exista) y rechazo con `restricted: storage full` (fase 4); `MIRROR_FROM` (fase 5); adjuntos en R2 (opcional).
+Pendiente según `09-roadmap.md`: volver a desplegar el relay para que exista `received_after`, que el archivista ya usa (`archiver late`, SNAP-8), y rechazo con `restricted: storage full` (fase 4); `MIRROR_FROM` (fase 5); adjuntos en R2 (opcional).
 
 ## Desarrollo
 

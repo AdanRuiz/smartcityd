@@ -67,6 +67,39 @@ export async function fetchDay(fetch: Fetch, relay: string, city: string, day: s
   return events
 }
 
+/** `received_after` value that starts from the first event a relay holds (docs/spec/07). */
+export const RECEIVED_START = '0'
+
+/**
+ * Lines a relay received after `after`, of any day, following the pages of `GET /v1/export?received_after=`
+ * (docs/spec/07, SNAP-8), and the cursor to ask from next time. Every page ends with a cursor line; paging stops
+ * when it leaves the cursor where it was, not at the first short page, since a relay may cap its pages below
+ * ours. A relay without the route, or whose pages lack the cursor line, fails. Lines are unchecked relay data.
+ */
+export async function fetchReceived(
+  fetch: Fetch,
+  relay: string,
+  city: string,
+  after: string,
+): Promise<{ events: unknown[]; cursor: string }> {
+  const events: unknown[] = []
+  const cursors = new Set<string>([after])
+  let cursor = after
+  for (;;) {
+    const params = new URLSearchParams({ c: city, received_after: cursor })
+    const lines = await ndjson(fetch, `${httpBase(relay)}/v1/export?${params}`)
+    const last = lines.at(-1)
+    if (!isCursor(last)) throw new Error(`${relay}: received_after page without a cursor line`)
+    const page = lines.slice(0, -1)
+    events.push(...page)
+    if (last.cursor === cursor) break
+    if (cursors.has(last.cursor)) throw new Error(`${relay}: export cursor ${last.cursor} repeats`)
+    cursors.add(last.cursor)
+    cursor = last.cursor
+  }
+  return { events, cursor }
+}
+
 /** What paging needs from a line; the full check is done by `buildDaily`. */
 function isPageable(value: unknown): value is { id: string; created_at: number } {
   if (typeof value !== 'object' || value === null) return false

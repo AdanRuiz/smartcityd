@@ -2,7 +2,7 @@
 
 CLI de snapshots. Especificación: [`docs/spec/06-distribucion-y-persistencia.md`](../../docs/spec/06-distribucion-y-persistencia.md).
 
-Estado (fase 4): arma el archivo diario, sus adendas y el evento `snapshot` sin firmar de cada uno (SNAP-1, SNAP-2, SNAP-3, SNAP-5), el `.torrent` de cada archivo con sus web seeds y su CID de IPFS, con `cid`, `magnet` y `urls` ya en el evento (DIST-1 a DIST-3), firma y publica ese evento con la llave del archivista (DIST-2) sella su `id` en los calendarios de OpenTimestamps, completa la prueba cuando confirma la transacción y la publica como kind 1040 (NIP-03) en los relays ("Sello de tiempo"); con `--verify` comprueba la prueba contra los encabezados de bloque de Bitcoin (SNAP-7). También calcula el CID de IPFS y el torrent de un build de la app para su evento `release` (`archiver app`, DIST-1, DIST-3). Pendientes según `09-roadmap.md`: subir el archivo a los web seeds y fijarlo en IPFS.
+Estado (fase 4): arma el archivo diario, sus adendas y el evento `snapshot` sin firmar de cada uno (SNAP-1, SNAP-2, SNAP-3, SNAP-5), con las adendas de los eventos tardíos que cada relay recibió desde la última corrida, sin volver a pedir días archivados (`archiver late`, SNAP-8), el `.torrent` de cada archivo con sus web seeds y su CID de IPFS, con `cid`, `magnet` y `urls` ya en el evento (DIST-1 a DIST-3), firma y publica ese evento con la llave del archivista (DIST-2) sella su `id` en los calendarios de OpenTimestamps, completa la prueba cuando confirma la transacción y la publica como kind 1040 (NIP-03) en los relays ("Sello de tiempo"); con `--verify` comprueba la prueba contra los encabezados de bloque de Bitcoin (SNAP-7). También calcula el CID de IPFS y el torrent de un build de la app para su evento `release` (`archiver app`, DIST-1, DIST-3). Pendientes según `09-roadmap.md`: subir el archivo a los web seeds y fijarlo en IPFS.
 
 Corre en la máquina del archivista o en CI, no en un Worker. Depende solo de `@smartcity/schemas`, `nostr-tools` y Node. Agregar una dependencia externa cambia `pnpm-lock.yaml`, y eso lo hace una persona, no el agente (`docs/operacion/agente.md`).
 
@@ -47,7 +47,22 @@ Para un día cuyo archivo diario ya está en `--out` (SNAP-2):
 - Vuelve a leer los relays como `snapshot`, con las mismas verificaciones y borrados, y aplica también los kind 5 que ya están archivados aunque ningún relay los sirva hoy (SNAP-3).
 - Escribe `sc_<city>_<día>_a<N>.ndjson.gz`, su `.torrent` y `sc_<city>_<día>_a<N>.snapshot.json` (tag `["t", "addendum"]` y los mismos `from` y `to` que el diario, para que el relay sume su `count`, RELAY-4) solo con los eventos que ningún archivo del día tiene. Sin eventos nuevos no escribe nada.
 
-Todavía no usa el cursor de recepción (SNAP-8): vuelve a pedir el día completo.
+Vuelve a pedir el día completo; para no recorrer días ya archivados, `archiver late`.
+
+## `archiver late`
+
+```sh
+node dist/cli.js late --city mx-gdl \
+  --relay wss://relay-a.example --relay wss://relay-b.example --out snapshots/
+```
+
+Halla los eventos tardíos sin volver a pedir días ya archivados (SNAP-8):
+
+- Pide a cada relay solo lo que recibió desde su cursor (`GET /v1/export?c=&received_after=`, `docs/spec/07`) y sigue las páginas hasta que el cursor deja de avanzar. Guarda el cursor de cada relay en `sc_<city>.cursors.json` dentro de `--out`; un relay sin cursor guardado empieza desde `0`, todo lo que tiene.
+- Los eventos de un día cuyo diario está en `--out` van a una adenda nueva de ese día, igual que con `archiver addendum`: mismas verificaciones, los kind 5 de los relays (desde el inicio del día más antiguo con eventos tardíos) y los ya archivados, y solo lo que ningún archivo del día tiene (SNAP-2, SNAP-3, SNAP-5). Los de días sin diario se dejan para `archiver snapshot`, que lee el día completo, y salen en el log.
+- Los cursores se guardan después de escribir las adendas: si la corrida se interrumpe, la siguiente vuelve a pedir desde el mismo punto y los archivos publicados evitan repetir eventos.
+- Un relay que falla, o que no tiene la ruta (`unsupported: received_after`, como el relay de referencia mientras no se vuelva a desplegar), se reporta y conserva su cursor; si ninguno responde no escribe nada. Para esos relays falta la alternativa de SNAP-8 (consultar por `since` una ventana del máximo de antigüedad que declaren); mientras tanto, `archiver addendum --day`.
+- Con `--publish --key` firma y publica cada adenda escrita, como `snapshot` y `addendum`. Se puede correr en un cron diario.
 
 ## `archiver publish`
 
