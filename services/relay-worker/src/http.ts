@@ -1,5 +1,5 @@
 import { acceptEvent, isNew, type AcceptDeps, type AcceptResult } from './accept.js'
-import { exportDay } from './export.js'
+import { exportEvents } from './export.js'
 import { filterFromQuery } from './filter.js'
 import { relayInfo } from './nip11.js'
 
@@ -45,7 +45,7 @@ export async function handleHttp(request: Request, deps: HttpDeps): Promise<Resp
   }
 
   if (url.pathname === '/v1/export' && request.method === 'GET') {
-    const result = await exportDay(deps.store, url.searchParams)
+    const result = await exportEvents(deps.store, url.searchParams, deps.now())
     if ('error' in result) return json({ ok: false, reason: result.error }, 400)
     return new Response(result.body, { headers: { ...CORS, 'Content-Type': 'application/x-ndjson' } })
   }
