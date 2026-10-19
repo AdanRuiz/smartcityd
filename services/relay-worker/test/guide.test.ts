@@ -20,6 +20,7 @@ const guide = (name: string) =>
 const GUIDE = guide('primer-dataset.md')
 const HISTORY = guide('historial.md')
 const REPORTS = guide('reportes.md')
+const DEVICES = guide('dispositivos.md')
 const MARKER = 'services/relay-worker/test/guide.test.ts'
 // Geohash of the guide's [20.6668, -103.3918] at precision 4, 5 and 6, as the SDK's encodeGeohash gives it (EVT-3).
 const G = [
@@ -324,5 +325,74 @@ describe('docs/desarrolladores/reportes.md (GOAL-1, PRIV-3, PRIV-5, TRUST-4)', (
       [...REPORTS.matchAll(/^\| `(\w+)` \| (\d+) \|/gm)].map(([, name, kind]) => [name!, Number(kind)]),
     )
     expect(table).toEqual({ report: KIND.REPORT, report_update: KIND.REPORT_UPDATE, roles: KIND.ROLES })
+  })
+})
+
+describe('docs/desarrolladores/dispositivos.md (GOAL-1, ID-5, DATA-9)', () => {
+  it("publishes with the device's own key and reads back only what the source's keys authorize", async () => {
+    const impostor = key()
+    const relays = new Map<string, ReturnType<typeof relayAt>>()
+    let forged: NostrEvent | null = null
+    const fetchStub = (async (input: string | URL | Request, init?: RequestInit) => {
+      const request = new Request(input, init)
+      const host = new URL(request.url).host
+      if (!relays.has(host)) relays.set(host, relayAt())
+      const posted = request.method === 'POST' ? ((await request.clone().json()) as NostrEvent) : null
+      const response = (await relays.get(host)!.handle(request))!
+      // Another key claims the same source with the same `a` tags.
+      if (posted?.kind === KIND.OBSERVATION && response.ok) {
+        const content = { v: 1, obs: [{ ts: posted.created_at, values: { laeq: 99 } }] }
+        forged ??= sign(impostor.sk, KIND.OBSERVATION, posted.tags, content, posted.created_at + 1)
+        const answer = await relays.get(host)!.handle(
+          new Request(`https://${host}/v1/events`, { method: 'POST', body: JSON.stringify(forged) }),
+        )
+        expect(await answer!.json()).toMatchObject({ ok: true })
+      }
+      return response
+    }) as typeof globalThis.fetch
+    const logged: unknown[][] = []
+
+    await compile(guideScript(DEVICES))(MODULES, fetchStub, { log: (...args) => logged.push(args), warn: () => {} })
+
+    expect(relays.size).toBe(2)
+    const now = Math.floor(Date.now() / 1000)
+    for (const { store } of relays.values()) {
+      const stored = await store.query({ tags: {} }, now)
+      const [source, app] = [KIND.SOURCE, KIND.APP].map((kind) => stored.find((e) => e.kind === kind)!)
+      const readings = stored.filter((e) => e.kind === KIND.OBSERVATION && e.pubkey !== impostor.pk)
+      // The owner signs the source and lists the device; the device signs its app card and the batch (ID-5).
+      const devices = JSON.parse(source!.content).keys as string[]
+      expect(devices).toHaveLength(1)
+      expect(devices).not.toContain(source!.pubkey)
+      expect(app!.pubkey).toBe(devices[0])
+      expect(JSON.parse(app!.content)).toMatchObject({
+        automated: true,
+        writes: [`${KIND.DATASET}:${source!.pubkey}:ruido`],
+      })
+      // One event for the three readings (DATA-9), pointing at the owner's source.
+      expect(readings).toHaveLength(1)
+      expect(readings[0]!.pubkey).toBe(devices[0])
+      expect(readings[0]!.tags).toEqual(
+        expect.arrayContaining([['c', CITY], ['a', `${KIND.SOURCE}:${source!.pubkey}:balcon-01`], ...G]),
+      )
+      expect(JSON.parse(readings[0]!.content).obs).toHaveLength(3)
+    }
+    // Once per reading across both relays; the forged one is not taken as the source's.
+    expect(logged.map(([who, , values]) => [who, values])).toEqual([
+      ['de la fuente', { laeq: 54.3 }],
+      ['de la fuente', { laeq: 55.1 }],
+      ['de la fuente', { laeq: 53.8 }],
+      ['sin autorizar', { laeq: 99 }],
+    ])
+  })
+
+  it('names the kinds that packages/schemas assigns', () => {
+    expect(guideScript(DEVICES)).toContain(
+      `const KIND = { observation: ${KIND.OBSERVATION}, dataset: ${KIND.DATASET}, source: ${KIND.SOURCE}, app: ${KIND.APP} }`,
+    )
+    const table = Object.fromEntries(
+      [...DEVICES.matchAll(/^\| `(\w+)` \| (\d+) \|/gm)].map(([, name, kind]) => [name!, Number(kind)]),
+    )
+    expect(table).toEqual({ source: KIND.SOURCE, app: KIND.APP, observation: KIND.OBSERVATION })
   })
 })
