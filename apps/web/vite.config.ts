@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
+import { buildInfo } from './build/build-info'
 import { CSP, SINGLE_FILE, singleFileHtml } from './build/single-file'
 
 /**
@@ -68,9 +69,17 @@ function singleFile(): Plugin {
   }
 }
 
+// APP-10: version and commit shown in "Acerca de".
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string }
+const info = buildInfo(pkg.version)
+
 export default defineConfig({
   base: './',
   plugins: [react(), staticApp(), serviceWorker(), singleFile()],
+  define: {
+    __APP_VERSION__: JSON.stringify(info.version),
+    __APP_COMMIT__: JSON.stringify(info.commit),
+  },
   worker: { format: 'iife' },
   build: {
     target: 'es2022',

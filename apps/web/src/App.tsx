@@ -3,6 +3,7 @@ import { HashRouter, NavLink, Route, Routes } from 'react-router'
 import { ClientProvider, useApp, useOutbox, useRelayStatus } from './client'
 import { CityPicker } from './geo/CityPicker'
 import { startAutoLocate, usePlace } from './geo/store'
+import { AboutPage } from './pages/AboutPage'
 import { IdentityPage } from './pages/IdentityPage'
 import { MapPage } from './pages/MapPage'
 import { RelaysPage } from './pages/RelaysPage'
@@ -32,6 +33,7 @@ function Header() {
           Confianza {anchors.length === 0 && <span className="chip bad">sin anclas</span>}
         </NavLink>
         <NavLink to="/identidad">{identity ? 'Identidad' : 'Solo lectura'}</NavLink>
+        <NavLink to="/acerca">Acerca de</NavLink>
       </nav>
       {outbox.length > 0 && (
         <span className="chip warn" title="Se enviarán cuando haya conexión con algún relay">
@@ -55,6 +57,7 @@ export function App() {
               <Route path="/relays" element={<RelaysPage />} />
               <Route path="/confianza" element={<TrustPage />} />
               <Route path="/identidad" element={<IdentityPage />} />
+              <Route path="/acerca" element={<AboutPage />} />
             </Routes>
           </main>
         </div>
