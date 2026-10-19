@@ -498,6 +498,13 @@ export class Client {
     return batch.length > 0 ? this.store.put(batch).catch(() => {}) : Promise.resolve()
   }
 
+  /** Drops an event of this device from its local view: one replaced by signing it again (SDK-12). */
+  private async forget(id: string): Promise<void> {
+    await this.flushRemembered()
+    this.verified.delete(id)
+    await this.store.forget([id]).catch(() => {})
+  }
+
   /** Events this device already has (NFR-3), entered into the session as verified. */
   private async local(filters: Filter[]): Promise<NostrEvent[]> {
     try {
@@ -554,7 +561,12 @@ export class Client {
    * it and no definitive rejection, it waits in the outbox (`queued: true`, SDK-4). Throws `ValidationError`
    * without sending when it does not validate.
    */
-  async publish(unsigned: UnsignedEvent, options: PublishOptions = {}): Promise<PublishResult> {
+  publish(unsigned: UnsignedEvent, options: PublishOptions = {}): Promise<PublishResult> {
+    return this.publishWith(unsigned, options, null)
+  }
+
+  /** `disposableKey`: the secret behind `options.signer`, kept sealed if the event is queued (SDK-12). */
+  private async publishWith(unsigned: UnsignedEvent, options: PublishOptions, disposableKey: Uint8Array | null): Promise<PublishResult> {
     const signer = options.signer ?? this.signer
     if (!signer) throw new Error('read-only client: pass a signer to publish')
     const contentObject = typeof unsigned.content === 'string' ? safeParse(unsigned.content) : unsigned.content
@@ -584,7 +596,7 @@ export class Client {
       event = await this.sign(signer, template, pubkey, asked, options.signal)
       result = await this.pool.publish(event)
     }
-    return this.settle(event, result)
+    return this.settle(event, result, disposableKey)
   }
 
   /**
@@ -598,9 +610,12 @@ export class Client {
   }
 
   /** SDK-4: with no relay accepting it and no definitive rejection, the event waits in the outbox. */
-  private async settle(event: NostrEvent, result: PublishResult): Promise<PublishResult> {
+  private async settle(event: NostrEvent, result: PublishResult, disposableKey: Uint8Array | null = null): Promise<PublishResult> {
     if (result.accepted.length > 0 || this.rejectedForGood(result)) return result
-    await this.store.outboxAdd({ event, queuedAt: now(), attempts: 1, lastError: result.rejected[0]?.reason ?? null })
+    // SDK-12: a disposable key is kept, sealed, until a relay accepts its event, so it can be signed again.
+    const key = disposableKey ? await this.store.sealKey(disposableKey).catch(() => null) : null
+    const entry: OutboxEntry = { event, queuedAt: now(), attempts: 1, lastError: result.rejected[0]?.reason ?? null }
+    await this.store.outboxAdd(key ? { ...entry, key } : entry)
     if (this.storage.persisted === null) void this.storage.persist()
     this.outboxChanged()
     return { ...result, queued: true }
@@ -624,7 +639,12 @@ export class Client {
 
   readonly outbox = {
     /** Signed events waiting for a relay, oldest first. */
-    list: (): Promise<OutboxEntry[]> => this.store.outboxList().catch(() => []),
+    list: (): Promise<OutboxEntry[]> =>
+      this.store
+        .outboxList()
+        // SEC-3: the sealed key stays inside the client.
+        .then((entries) => entries.map(withoutKey))
+        .catch(() => []),
 
     /**
      * Sends again what waits. An event leaves the outbox when a relay accepts it, or when every relay rejects it
@@ -646,10 +666,22 @@ export class Client {
   }
 
   private async flushOutbox(): Promise<void> {
-    const entries = await this.outbox.list()
-    for (const entry of entries) {
+    const entries = await this.store.outboxList().catch((): OutboxEntry[] => [])
+    for (let entry of entries) {
       if (this.closed) return
-      const result = await this.pool.publish(entry.event, { retry: false })
+      let result = await this.pool.publish(entry.event, { retry: false })
+      if (result.accepted.length === 0 && result.rejected.some((r) => isTooOld(r.reason))) {
+        const fresh = await this.signAgain(entry).catch(() => null)
+        if (fresh) {
+          // The new one is queued before the old one leaves, so a crash in between loses nothing.
+          const old = entry.event.id
+          entry = { ...entry, event: fresh }
+          await this.store.outboxAdd(entry)
+          await this.store.outboxRemove(old)
+          await this.forget(old)
+          result = await this.pool.publish(fresh, { retry: false })
+        }
+      }
       if (result.accepted.length > 0) await this.store.outboxRemove(entry.event.id)
       else if (this.rejectedForGood(result)) {
         this.outboxRejected.push({ event: entry.event, reason: result.rejected[0]!.reason })
@@ -659,6 +691,30 @@ export class Client {
       }
     }
     this.outboxChanged()
+  }
+
+  /**
+   * SDK-12: the same event with `created_at` of now, the proof of work it carried and the same key: the disposable
+   * one kept in the entry, or the client's signer if it is the author. Null when no key can sign it. The moment of
+   * the fact is not lost: it is in the content (`ts`).
+   */
+  private async signAgain(entry: OutboxEntry): Promise<NostrEvent | null> {
+    const old = entry.event
+    let signer: Signer | null = null
+    if (entry.key) {
+      const secret = await this.store.openKey(entry.key)
+      if (secret) signer = localSigner(secret)
+    } else if (this.signer && (await this.signer.getPublicKey()) === old.pubkey) signer = this.signer
+    if (!signer || (await signer.getPublicKey()) !== old.pubkey) return null
+    const bits = Number(old.tags.find((t) => t[0] === 'nonce')?.[2] ?? 0) || 0
+    const template: EventTemplate = {
+      kind: old.kind,
+      // Later than before even within the same second, so the id changes.
+      created_at: Math.max(now(), old.created_at + 1),
+      tags: old.tags.filter((t) => t[0] !== 'nonce').map((t) => [...t]),
+      content: old.content,
+    }
+    return this.sign(signer, template, old.pubkey, bits)
   }
 
   private outboxChanged(): void {
@@ -837,10 +893,12 @@ export class Client {
      */
     create: async (input: ReportInput): Promise<PublishResult & { pubkey: string }> => {
       const { category, title, body, loc, identity = 'disposable', precision = REPORT_PRECISION, signal } = input
-      const signer = identity === 'disposable' ? localSigner(generateSecretKey()) : this.signer
+      const disposable = identity === 'disposable' ? generateSecretKey() : null
+      const signer = disposable ? localSigner(disposable) : this.signer
       if (!signer) throw new Error('read-only client: pass a signer, or use a disposable identity')
       const content: ReportContent = { v: 1, title, ...(body ? { body } : {}), loc: roundTo(loc, precision) }
-      const result = await this.publish({ kind: KIND.REPORT, tags: [['t', category.toLowerCase()]], content }, { signer, signal })
+      const template = { kind: KIND.REPORT, tags: [['t', category.toLowerCase()]], content }
+      const result = await this.publishWith(template, { signer, signal }, disposable)
       return { ...result, pubkey: await signer.getPublicKey() }
     },
 
@@ -966,6 +1024,17 @@ export async function createClient(options: ClientOptions): Promise<Client> {
   await Promise.all([client.resolveCity().catch(() => null), client.trust.refresh().catch(() => {})])
   void client.outbox.flush()
   return client
+}
+
+function withoutKey(entry: OutboxEntry): OutboxEntry {
+  const copy = { ...entry }
+  delete copy.key
+  return copy
+}
+
+/** RELAY-5: the relay refuses regular events older than its limit (`invalid: too old`, docs/spec/07 step 3). */
+function isTooOld(reason: string): boolean {
+  return reason.startsWith('invalid: too old')
 }
 
 /** Leading zero bits a `pow:` rejection asks for; 0 when it is not one or says no number. */

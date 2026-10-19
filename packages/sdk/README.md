@@ -2,9 +2,9 @@
 
 Cliente del protocolo SmartCity para navegador, Node ≥ 20 y Workers. Especificación: [`docs/spec/05-integracion-de-apps.md`](../../docs/spec/05-integracion-de-apps.md).
 
-Estado (fase 3): cliente, firmantes local y NIP-07, pool de relays con estado, validación al publicar y al recibir, publicación y consulta de `dataset`, `source` y `observation`, agrupación de lecturas; almacén local y cola de salida (IndexedDB o memoria), reportes y `report_update` con llave desechable, niveles de confianza (`sc.trustOf`, roles, moderación) y prueba de trabajo.
+Estado (fase 3): cliente, firmantes local y NIP-07, pool de relays con estado, validación al publicar y al recibir, publicación y consulta de `dataset`, `source` y `observation`, agrupación de lecturas; almacén local y cola de salida (IndexedDB o memoria), reportes y `report_update` con llave desechable, refirmado de la cola cuando un relay la encuentra demasiado antigua, niveles de confianza (`sc.trustOf`, roles, moderación) y prueba de trabajo.
 
-Pendiente según `09-roadmap.md`: fotos en reportes (adjuntos, PRIV-4, SEC-4); refirmado de la cola por antigüedad (SDK-12) y `sc.archive.read` (fase 4); `state` y `live` (fase 5); rotación de raíces por mayoría (TRUST-12).
+Pendiente según `09-roadmap.md`: fotos en reportes (adjuntos, PRIV-4, SEC-4); `sc.archive.read` (fase 4); `state` y `live` (fase 5); rotación de raíces por mayoría (TRUST-12).
 
 ```ts
 import { createClient, localSigner, generateSecretKey } from '@smartcity/sdk'
@@ -52,6 +52,7 @@ En navegador, con almacén y cola que sobreviven a recargas: `createClient({ ...
 | TRUST-1, TRUST-3 | Con `trustAnchors` toma la definición `city` firmada por ellas. Sin anclas no elige: `sc.city` queda en `null` y `sc.cityCandidates()` lista las existentes. |
 | SDK-4, GOAL-7, NFR-3 | Sin ningún `OK` y sin un rechazo definitivo de todos los relays, el evento firmado queda en la cola (`queued: true`) y se reenvía cuando un relay conecta, cada 30 s mientras haya algo, o con `sc.outbox.flush()`. Lo que se publica y lo que llega se guarda en el almacén local, y las consultas lo unen a lo de los relays: sin red se sigue viendo. `sc.outbox.list()`, `onChange()` y `rejected()`. |
 | SDK-8, SPAM-1 | Antes de firmar un `report` de una llave sin rol mina 16 bits (NIP-13); si un relay pide más (`pow: difficulty N required`), mina otra vez y reenvía. En navegador, en un Web Worker con `workerMiner`; se cancela con `signal`. |
+| SDK-12, RELAY-5 | Si un relay responde `invalid: too old` a un evento de la cola, se vuelve a firmar con `created_at` actual, la misma llave y la misma prueba de trabajo, y sustituye al viejo en la cola y en el almacén local; el momento del hecho sigue en el contenido. La llave desechable de un reporte encolado se guarda hasta el primer `OK`, cifrada con una `CryptoKey` AES-GCM no exportable en IndexedDB (ID-2); `sc.outbox.list()` no la muestra (SEC-3). Sin esa llave ni la del firmante del cliente, el rechazo se queda en `rejected()`. |
 | SDK-11, ID-7 | La primera vez que encola, pide `navigator.storage.persist()`; `sc.storage.persisted` dice si se concedió. |
 | TRUST-4, TRUST-7, TRUST-10 | Solo cuentan las listas `roles` firmadas por las anclas; las anclas cuentan como `authority`. `sc.trustOf(evento)` y `sc.trust.levelOf(lectura)` calculan `verified` (rol, o llave listada en `keys` de una fuente cuyo dueño tiene rol), `flagged` (llave `blocked`, o etiqueta 1985 / denuncia 1984 de un `moderator`) o `community`. Nunca se toma del evento; `sc.trust.setAnchors()` lo recalcula y avisa por `sc.trust.onChange()`. |
 | TRUST-5 | `observations.query` y `reports.query` aceptan `trust` con los niveles que se quieren. |
