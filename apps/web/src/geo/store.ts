@@ -12,13 +12,23 @@ export interface CurrentPlace {
   source: PlaceSource
 }
 
-const KEY = 'sc.place'
+export const PLACE_KEY = 'sc.place'
 const RANK: Record<PlaceSource, number> = { ip: 0, browser: 1, manual: 2 }
+
+/** A choice of the user as saved (APP-15), or null if `saved` is not one. */
+export function parseSavedPlace(saved: unknown): CurrentPlace | null {
+  if (!saved || typeof saved !== 'object') return null
+  const { place, source } = saved as Partial<CurrentPlace>
+  if (source !== 'manual' || !place || typeof place !== 'object') return null
+  const finite = (n: unknown) => typeof n === 'number' && Number.isFinite(n)
+  const valid =
+    typeof place.name === 'string' && finite(place.lat) && finite(place.lon) && Array.isArray(place.bbox) && place.bbox.length === 4 && place.bbox.every(finite)
+  return valid ? { place, source } : null
+}
 
 function load(): CurrentPlace | null {
   try {
-    const saved = JSON.parse(readItem(KEY) ?? 'null') as CurrentPlace | null
-    return saved?.place && Array.isArray(saved.place.bbox) && saved.source === 'manual' ? saved : null
+    return parseSavedPlace(JSON.parse(readItem(PLACE_KEY) ?? 'null'))
   } catch {
     return null
   }
@@ -36,7 +46,7 @@ export function setPlace(place: Place, source: PlaceSource): void {
   if (current && source !== 'manual' && RANK[current.source] > RANK[source]) return
   current = { place, source }
   // Only a choice of the user is kept (APP-15): detection runs again on the next visit.
-  if (source === 'manual') writeItem(KEY, JSON.stringify(current))
+  if (source === 'manual') writeItem(PLACE_KEY, JSON.stringify(current))
   listeners.forEach((l) => l())
 }
 
