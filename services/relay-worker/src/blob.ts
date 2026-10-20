@@ -1,4 +1,4 @@
-import { HTTP_AUTH_KIND, isHex64, tagValues } from '@smartcity/schemas'
+import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MIME, HTTP_AUTH_KIND, isHex64, tagValues } from '@smartcity/schemas'
 import { verifyEvent } from 'nostr-tools/pure'
 import { IP_RATE_FACTOR } from './config.js'
 import { checkStructure, type NostrEvent } from './event.js'
@@ -17,9 +17,9 @@ export interface BlobStore {
 }
 
 /** Recommended maximum of an attachment (docs/spec/03, attachments; photos are resized first, PRIV-4). */
-export const BLOB_MAX_BYTES = 2 * 1024 * 1024
+export const BLOB_MAX_BYTES = ATTACHMENT_MAX_BYTES
 /** Attachments are report photos: only images, which a browser does not run. */
-export const BLOB_MIME = ['image/jpeg', 'image/png', 'image/webp'] as const
+export const BLOB_MIME = ATTACHMENT_MIME
 /** NIP-98: how far the authorization's `created_at` may be from now. */
 export const BLOB_AUTH_WINDOW_SECONDS = 60
 
