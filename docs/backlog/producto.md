@@ -2,19 +2,30 @@
 
 Documento operativo, no normativo. La prioridad de cada entregable está en [`11-priorizacion`](../spec/11-priorizacion.md) y el orden de las fases en [`09-roadmap`](../spec/09-roadmap.md); si este archivo los contradice, ganan ellos.
 
-**Sprint actual:** Fase 4 · Persistencia: snapshots y distribución de la app.
-**Objetivo del sprint** (el "Hecho cuando" de `09`):
+**Fase actual:** 4 · Persistencia: snapshots y distribución de la app.
+**Meta de la fase** (el "Hecho cuando" de `09`):
 1. Un relay vacío se reconstruye solo desde snapshots (NFR-4). Hecho en código (#5).
 2. `smartcity.html` descargado por torrent, abierto desde `file://` y sin el espejo principal disponible, muestra datos en vivo.
 3. La prueba OTS de un snapshot verifica contra Bitcoin.
 
 **Adelanto permitido:** Fase 5.
 
+## Sprint actual: 2026-W43 (lunes 19 a domingo 25 de octubre)
+
+**Objetivo:** cerrar el único Must técnico de la fase y dejar listos los despliegues que desbloquean los criterios 2 y 3.
+
+| Quién | Ítems, en orden |
+|---|---|
+| agente | PB-1, PB-23, PB-24, PB-27, PB-28, PB-25, PB-38, PB-39 |
+| humano | PB-15, PB-14, PB-18, PB-16 |
+
 ## Cómo se usa
 
-- **Sprint = fase.** El sprint actual es la fase en curso y termina cuando se cumple su objetivo, no en una fecha. Lo cierra el mantenedor: pliega la tabla de la fase al final del archivo y cambia la línea "Sprint actual".
-- **Orden.** Cada tabla está en orden de prioridad: primero Must, luego Should, luego Could. El agente toma el primer ítem `pendiente` de tipo `agente` del sprint actual. Si no queda ninguno, toma uno de la fase de adelanto, nunca de una más lejana.
-- **Arrastre.** Lo Should y lo Could que no entraron en su fase pasan al sprint actual (`09`) con su fase de origen en la columna *Fase*. También pasan los Must humanos de fases cuyo objetivo ya se cumplió.
+- **Fase = meta; sprint = semana.** La fase dice qué hay que lograr y puede ocupar varios sprints. El sprint dura una semana ISO, de lunes a domingo, y se nombra por ella (`2026-W43`).
+- **Planeación (lunes).** El mantenedor elige los ítems de la semana, en orden, y escribe un objetivo de una línea. Toma primero los del agente y los humanos que desbloquean a otros, sin pasar de la fase actual ni de la de adelanto.
+- **Revisión (domingo o lunes).** Mezcla lo pendiente, marca lo que quedó hecho y devuelve al backlog lo que no se terminó: no pasa solo al sprint siguiente. Si la meta de la fase se cumplió, cierra la fase: pliega su tabla al final del archivo y cambia la línea "Fase actual".
+- **Orden.** Dentro del sprint, el agente toma el primer ítem `pendiente` de tipo `agente`. Si se acaban antes del domingo, sigue con el siguiente ítem `agente` de la fase actual, en el orden de su tabla, y después con los de la fase de adelanto, nunca de una más lejana. Cada tabla de fase está en orden de prioridad: primero Must, luego Should, luego Could.
+- **Arrastre.** Lo Should y lo Could que no entraron en su fase pasan a la fase actual (`09`) con su fase de origen en la columna *Fase*. También pasan los Must humanos de fases cuyo objetivo ya se cumplió.
 - **Estados:** `pendiente`, `en curso`, `hecho · #PR` (o el commit, en lo anterior a los PRs) y `bloqueado`, con el motivo en *Aceptación y notas*.
 - **Quién:** `agente` si se puede terminar en una sesión con tests, o `humano` si exige una persona (custodios, cuentas, dominios, máquinas, despliegues, llaves o secretos).
 - **Qué puede cambiar el agente:** el estado de su ítem, en el mismo PR que lo implementa, y partir un ítem en varios con IDs nuevos. No cambia prioridades ni el orden; eso se revisa en el PR.
@@ -22,7 +33,7 @@ Documento operativo, no normativo. La prioridad de cada entregable está en [`11
 
 Mientras no cambie `scripts/agent/`, el agente sigue eligiendo su tarea desde `09` y `11` (ver [`operacion/agente.md`](../operacion/agente.md)).
 
-## Fase 4 · Persistencia: snapshots y distribución de la app (sprint actual)
+## Fase 4 · Persistencia: snapshots y distribución de la app (fase actual)
 
 | ID | Ítem | MoSCoW | Fase | Quién | Estado | Requisitos | Aceptación y notas |
 |---|---|---|---|---|---|---|---|
@@ -117,7 +128,7 @@ Mientras no cambie `scripts/agent/`, el agente sigue eligiendo su tarea desde `0
 | PB-68 | SDK: cliente, firmantes, pool de relays, validación, publicación, consulta y agrupación de lecturas | Must | 2 | agente | hecho · 47d0165 | SDK-1 a SDK-3, SDK-5 a SDK-7, SDK-9, SDK-10, REPL-1, REPL-2, REPL-4 a REPL-6, ID-1 a ID-4, ID-6, SEC-3 | |
 | PB-69 | App: mapa, capa de un dataset, panel de relays; dos relays y espejo en Cloudflare Pages | Must | 2 | agente | hecho · 75767df, 8d4607e | APP-1 a APP-3, APP-5, APP-7, APP-9, NFR-1, SEC-1, SEC-2, PRIV-7 | p95 de 225 ms entre publicar y recibir |
 
-Los custodios y el evento `city` pasaron al sprint actual (PB-21, PB-22).
+Los custodios y el evento `city` pasaron a la fase 4 (PB-21, PB-22).
 
 </details>
 
