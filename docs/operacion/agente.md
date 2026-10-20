@@ -16,7 +16,7 @@ Corre 3 minutos después de iniciar sesión y luego cada hora mientras la sesió
    - El PR lleva `Closes #n`. Al mezclarlo, en la siguiente corrida (a más tardar en una hora) arranca el siguiente ítem.
    - Si el ítem no se puede hacer, lo comenta y le pone `agent:bloqueado`, y la siguiente corrida toma otro. Si no cabe en una sesión, responde `PARTIR:` y el script crea los ítems más chicos y cierra el original.
 4. Por cada tarea abre un PR contra `main`. Si `build`, `lint`, `typecheck` o `test` fallan, el PR se abre como borrador. Si el agente no puede resolver un issue, lo comenta y le pone `agent:bloqueado` (a un bug también le quita `agent`).
-5. **Errores pasajeros** (cuota agotada, límite de tasa, API saturada, red caída o la CLI que no responde): la tarea queda como *Reintento* en la bitácora, el issue no se toca, la corrida se detiene y el ítem del backlog no se marca. La siguiente corrida lo reintenta. Que una sesión exceda los 45 min no cuenta como pasajero, porque se repetiría: se marca bloqueada para que la tarea se parta.
+5. **Errores pasajeros** (cuota agotada, límite de tasa, API saturada, red caída, la CLI que no responde, o una llave o sesión inválida: 401): la tarea queda como *Reintento* en la bitácora, el issue no se toca, la corrida se detiene y el ítem del backlog no se marca. La siguiente corrida lo reintenta. Que una sesión exceda los 45 min no cuenta como pasajero, porque se repetiría: se marca bloqueada para que la tarea se parta.
 
 **Nada se mezcla ni se despliega sin una persona.** El mantenedor revisa y mezcla cada PR.
 

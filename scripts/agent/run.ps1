@@ -148,8 +148,9 @@ function Test-Checks {
 }
 
 # Errors worth retrying on a later run: quota, rate limits, overload, network.
-# 402 is OpenRouter without credits: retried after the maintainer tops up, never a blocked item.
-$TransientStatus = 402, 429, 500, 502, 503, 504, 529
+# 401 (bad key or expired login) and 402 (OpenRouter without credits) are the maintainer's to fix,
+# not the item's: retried on later runs, never a blocked item.
+$TransientStatus = 401, 402, 429, 500, 502, 503, 504, 529
 $TransientText = 'usage limit|rate limit|limit reached|overloaded|ECONNRESET|ETIMEDOUT|ENOTFOUND|network|socket hang up|RESOURCE_EXHAUSTED|quota|UNAVAILABLE|insufficient credits'
 
 # Returns @{ status = 'ok' | 'transient' | 'error'; text = <result or reason> }.
