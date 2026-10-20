@@ -1,19 +1,8 @@
 import type { City } from '@smartcity/sdk'
-import { decode } from 'nostr-tools/nip19'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useApp } from '../client'
 import { Npub, ROLE_LABEL } from '../components'
-
-function parsePubkey(text: string): string | null {
-  const t = text.trim()
-  if (/^[0-9a-f]{64}$/.test(t)) return t
-  try {
-    if (!t.startsWith('npub1')) return null
-    return decode(t as `npub1${string}`).data
-  } catch {
-    return null
-  }
-}
+import { parsePubkey } from '../identity'
 
 /**
  * Whom this app believes about the city (docs/spec/04): the anchors (TRUST-1, TRUST-2), the definitions of the

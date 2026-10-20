@@ -10,6 +10,7 @@ import { MapPage } from './pages/MapPage'
 import { RelaysPage } from './pages/RelaysPage'
 import { ReportsPage } from './pages/ReportsPage'
 import { TrustPage } from './pages/TrustPage'
+import { CHANNEL_LABEL } from './updates'
 
 function Header() {
   const { cityConfig, city, identity, anchors } = useApp()
@@ -46,12 +47,30 @@ function Header() {
   )
 }
 
+/** APP-8: a newer version announced by the developer keys in use, above every page. The channels are in "Acerca de". */
+function UpdateNotice() {
+  const { updates } = useApp()
+  if (updates.length === 0) return null
+  const versions = updates.map((offer) => `${CHANNEL_LABEL[offer.channel]} ${offer.version}`).join(' · ')
+  return (
+    <div className="notice update">
+      <span>
+        <span className="chip warn">versión nueva</span> Hay una versión nueva de SmartCity: {versions}.
+      </span>
+      <NavLink to="/acerca" className="link">
+        Ver los canales
+      </NavLink>
+    </div>
+  )
+}
+
 export function App() {
   return (
     <ClientProvider>
       <HashRouter>
         <div className="layout">
           <Header />
+          <UpdateNotice />
           <main>
             <Routes>
               <Route path="/" element={<MapPage />} />

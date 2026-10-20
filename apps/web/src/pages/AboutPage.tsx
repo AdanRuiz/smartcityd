@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { isSameBuild, loadSelfCopy, selfCopyUrl, type SelfCopy } from '../about'
 import { applyBackup, BACKUP_FILE, backupText, parseBackup } from '../backup'
 import { useApp } from '../client'
+import { Npub } from '../components'
+import { DEVELOPERS } from '../config'
 import { getPlace } from '../geo/store'
-import { storedKey } from '../identity'
+import { parsePubkey, storedKey } from '../identity'
+import { CHANNEL_LABEL, releaseChannels, type ReleaseOffer } from '../updates'
 import { SINGLE_FILE, isSingleFile, runningBuildId } from '../variant'
 
 type Copy =
@@ -114,9 +117,156 @@ export function AboutPage() {
         mostraría cualquier hash. La comprobación que vale es pasar <span className="mono">sha256sum</span> al archivo
         descargado y compararlo con el del evento release firmado por los desarrolladores. La app nunca se actualiza sola.
       </p>
+      <ReleaseSection />
       <BackupSection />
     </div>
   )
+}
+
+/**
+ * APP-8: the `release` of each channel signed by the developer keys this build carries (APP-5) and, if one announces a
+ * newer version, its channels. APP-9: the app shows where to get it and the expected hash; it never swaps its code.
+ */
+function ReleaseSection() {
+  const { settings, updateSettings, updates, updatesState, refreshUpdates } = useApp()
+  const developers = settings.developers
+  const [input, setInput] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const add = (e: FormEvent) => {
+    e.preventDefault()
+    const pubkey = parsePubkey(input)
+    if (!pubkey) return setError('Escribe una llave pública npub1… o hex de 64 caracteres.')
+    setError(null)
+    setInput('')
+    if (!developers.includes(pubkey)) updateSettings({ developers: [...developers, pubkey] })
+  }
+
+  return (
+    <section>
+      <h2>Versiones</h2>
+      <p className="muted small">
+        La app lee el evento <span className="mono">release</span> (kind 31486) que firman las llaves de desarrollador
+        de esta compilación y avisa, arriba, cuando anuncia una versión más nueva. Nunca se actualiza sola: en un
+        espejo la versión nueva llega al recargar; en una copia local, descarga el archivo y compara su sha256 con el
+        esperado.
+      </p>
+      <div className="row">
+        <button type="button" onClick={refreshUpdates} disabled={updatesState === 'checking'}>
+          Comprobar de nuevo
+        </button>
+        <span className="muted small">
+          {updatesState === 'checking'
+            ? 'Buscando releases en los relays…'
+            : updatesState === 'error'
+              ? 'No se pudo consultar el release: no respondió ningún relay.'
+              : developers.length === 0
+                ? 'Sin llaves de desarrollador, la app no comprueba versiones.'
+                : updates.length === 0
+                  ? `Estás al día: ningún release firmado anuncia una versión más nueva que ${__APP_VERSION__}.`
+                  : `Estos releases anuncian una versión más nueva que ${__APP_VERSION__}:`}
+        </span>
+      </div>
+      <div className="stack">
+        {updates.map((offer) => (
+          <OfferCard key={offer.channel} offer={offer} />
+        ))}
+      </div>
+
+      <h3>Llaves de desarrollador</h3>
+      <p className="muted small">
+        Solo cuentan los <span className="mono">release</span> firmados por estas llaves. Vienen embebidas en la
+        compilación; si usas otra copia, pon las que publique quien la mantenga, o quítalas todas para no recibir avisos.
+      </p>
+      {developers.length === 0 ? (
+        <p className="notice">
+          Esta compilación no trae llaves de desarrollador: esta copia no conoce versiones nuevas ni puede avisar de ellas.
+        </p>
+      ) : (
+        <ul className="plain">
+          {developers.map((pubkey) => (
+            <li key={pubkey} className="row-between">
+              <Npub pubkey={pubkey} full />
+              <button type="button" onClick={() => updateSettings({ developers: developers.filter((pk) => pk !== pubkey) })}>
+                Quitar
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form onSubmit={add} className="row">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="npub1…"
+          aria-label="Llave pública del desarrollador"
+        />
+        <button type="submit">Añadir llave</button>
+        {DEVELOPERS.length > 0 && (
+          <button type="button" onClick={() => updateSettings({ developers: [...DEVELOPERS] })}>
+            Volver a las del build
+          </button>
+        )}
+      </form>
+      {error && <p className="error">{error}</p>}
+    </section>
+  )
+}
+
+/** APP-8: one channel offering a newer version; APP-9: where to get it and the hash to compare, never a script to run. */
+function OfferCard({ offer }: { offer: ReleaseOffer }) {
+  const { content, event, channel } = offer
+  const channels = releaseChannels(content)
+  return (
+    <div className="card">
+      <div className="row-between">
+        <strong>
+          Canal {CHANNEL_LABEL[channel]} · {offer.version}
+        </strong>
+        <span className="muted small">{new Date(event.created_at * 1000).toLocaleDateString()}</span>
+      </div>
+      {content.commit && (
+        <div className="small muted">
+          Commit <span className="mono">{content.commit}</span>
+        </div>
+      )}
+      {content.notes && <p className="small">{content.notes}</p>}
+      <div className="small">
+        {SINGLE_FILE}: sha256 esperado <span className="mono break">{content.single.x}</span>
+        {content.single.size > 0 && `, ${content.single.size.toLocaleString('es')} bytes`}
+      </div>
+      <div className="row">
+        {channels.downloads.map((url) => (
+          <a key={url} className="link" href={url} target="_blank" rel="noreferrer">
+            Descargar ({hostOf(url)})
+          </a>
+        ))}
+        {channels.mirrors.map((url) => (
+          <a key={url} className="link" href={url} target="_blank" rel="noreferrer">
+            Espejo ({hostOf(url)})
+          </a>
+        ))}
+        {channels.ipfs.map((url) => (
+          <a key={url} className="link" href={url} target="_blank" rel="noreferrer">
+            IPFS ({hostOf(url)})
+          </a>
+        ))}
+      </div>
+      {channels.magnet && (
+        <p className="small muted">
+          Torrent: <span className="mono break">{channels.magnet}</span>
+        </p>
+      )}
+    </div>
+  )
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
 }
 
 /**
