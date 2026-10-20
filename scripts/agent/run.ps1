@@ -1,7 +1,8 @@
 <#
 .SYNOPSIS
   Unattended development agent. Fixes open GitHub issues labeled `agent`, then
-  advances the roadmap by one small increment, opening one PR per task.
+  implements the next item of the product backlog (issues labeled `backlog`,
+  weekly sprint = milestone), opening one PR per task.
 
 .DESCRIPTION
   Runs Claude Code headless (`claude -p`) on the user's subscription, inside an
@@ -17,7 +18,10 @@ param(
   [int]$TaskTimeoutMinutes = 45,
   # Pinned so a Claude Code update cannot silently change the model behind the PRs.
   [string]$Model = 'claude-opus-5-5',
-  [switch]$SkipRoadmap,
+  [Alias('SkipRoadmap')]
+  [switch]$SkipBacklog,
+  # Agent items proposed for a new weekly milestone; the maintainer adjusts them on Monday.
+  [int]$SprintSize = 8,
   [switch]$DryRun
 )
 
@@ -33,12 +37,11 @@ $StateDir = Join-Path $env:LOCALAPPDATA 'smartcity-agent'
 $Clone = Join-Path $StateDir 'repo'
 $BinDir = Join-Path $StateDir 'bin'
 $LogDir = Join-Path $StateDir 'logs'
-$RoadmapStamp = Join-Path $StateDir 'roadmap-last.txt'
 $RunId = Get-Date -Format 'yyyyMMdd-HHmmss'
 . (Join-Path $PSScriptRoot 'common.ps1')
 
 # Last commit that touched the prompts, so metrics.ps1 can compare prompt versions.
-$PromptFiles = @('scripts/agent/prompt-issue.md', 'scripts/agent/prompt-roadmap.md')
+$PromptFiles = @('scripts/agent/prompt-issue.md', 'scripts/agent/prompt-backlog.md')
 $PromptVersion = [string](Exec { git -C $SourceRepo log -1 --format=%h -- @PromptFiles } -AllowFail)
 if (-not $PromptVersion) { $PromptVersion = 'sin-version' }
 if (Exec { git -C $SourceRepo status --porcelain -- @PromptFiles } -AllowFail) { $PromptVersion += '+local' }
@@ -51,6 +54,10 @@ $LabelBlocked = 'agent:bloqueado'
 $LabelPause = 'agent:pausa'
 # A pinned open issue with this label gets one comment per run that did something.
 $LabelLog = 'agent:bitacora'
+# Product backlog (docs/backlog/producto.md): one issue per item; `humano` items are never taken.
+$LabelBacklog = 'backlog'
+$LabelHuman = 'humano'
+$BacklogDoc = 'docs\backlog\producto.md'
 $Runs = New-Object System.Collections.ArrayList
 $RunError = $null
 $StopRun = $false
@@ -195,6 +202,8 @@ function Invoke-Task([string]$Branch, [string]$Prompt, [string]$Closes) {
   Exec { git -C $Clone clean -fd 2>&1 } | Out-Host
   $commits = [int](Exec { git -C $Clone rev-list --count origin/main..HEAD })
   if ($first -like 'BLOQUEADO:*') { return "blocked: $($first.Substring(10).Trim())`n`n$rest" }
+  # Too big for one session: the agent proposes smaller items instead (backlog only; commits are ignored).
+  if ($first -like 'PARTIR:*') { return "split: $($first.Substring(7).Trim())`n`n$rest" }
   if ($commits -eq 0) { return "blocked: el agente termino sin commits.`n`n$result" }
 
   $changed = @(Exec { git -C $Clone diff --name-only origin/main...HEAD })
@@ -224,6 +233,7 @@ function Add-RunRow([string]$Task, [string]$Outcome) {
     'draft' { 'PR en borrador (verificaciones rojas)' }
     'blocked:*' { 'Bloqueado: ' + (($Outcome.Substring(8).Trim() -split "`r?`n")[0]) }
     'retry:*' { 'Reintento: ' + (($Outcome.Substring(6).Trim() -split "`r?`n")[0]) }
+    'split:*' { 'Partido en items nuevos: ' + (($Outcome.Substring(6).Trim() -split "`r?`n")[0]) }
     default { $Outcome }
   }
   $s = $LastStats
@@ -267,6 +277,106 @@ function Publish-RunLog {
   $lines += '', "Log local: ``%LOCALAPPDATA%\smartcity-agent\logs\$RunId.log``"
   $issue = Get-LogIssue
   Exec { gh issue comment $issue --repo $Slug --body-file (Write-TempFile ($lines -join "`n")) 2>&1 } | Out-Host
+}
+
+# --- Product backlog (docs/backlog/producto.md) ---------------------------------
+
+# "Fase actual" and "Adelanto permitido" from the backlog doc on origin/main; $null if absent.
+function Get-PhaseConfig {
+  $f = Join-Path $Clone $BacklogDoc
+  if (-not (Test-Path $f)) { return $null }
+  $t = [IO.File]::ReadAllText($f, $Utf8)
+  if ($t -notmatch '\*\*Fase actual:\*\*\s*(\d+)') { return $null }
+  $current = [int]$Matches[1]
+  $ahead = if ($t -match '\*\*Adelanto permitido:\*\*\s*Fase\s*(\d+)') { [int]$Matches[1] } else { $null }
+  return [pscustomobject]@{ current = $current; ahead = $ahead }
+}
+
+function Get-BacklogIssues {
+  return @((Get-GhJson { gh issue list --repo $Slug --label $LabelBacklog --state open --limit 300 --json number,title,body,labels,milestone }) | ForEach-Object { $_ })
+}
+
+function Get-LabelNames($Issue) { return @($Issue.labels | ForEach-Object { $_.name }) }
+
+function Get-MilestoneTitle($Issue) {
+  $m = Get-Prop $Issue 'milestone'
+  if ($m) { return [string](Get-Prop $m 'title') } else { return '' }
+}
+
+# Order of producto.md: the week's milestone by issue number; then the current phase, then the
+# phase ahead, by priority and number. Never `humano`, blocked items or a phase further away.
+function Get-BacklogQueue($Issues, $Phase, [string]$Sprint) {
+  $prio = @{ must = 0; should = 1; could = 2 }
+  $rows = foreach ($i in $Issues) {
+    $names = Get-LabelNames $i
+    if ($names -contains $LabelHuman -or $names -contains $LabelBlocked) { continue }
+    $inSprint = (Get-MilestoneTitle $i) -eq $Sprint
+    $rank = if ($names -contains "fase-$($Phase.current)") { 0 } elseif ($Phase.ahead -and $names -contains "fase-$($Phase.ahead)") { 1 } else { -1 }
+    if (-not $inSprint -and $rank -lt 0) { continue }
+    $p = 3
+    foreach ($k in $prio.Keys) { if ($names -contains $k) { $p = $prio[$k] } }
+    $key = if ($inSprint) { '0-0-0-{0:D6}' -f [int]$i.number } else { '1-{0}-{1}-{2:D6}' -f $rank, $p, [int]$i.number }
+    [pscustomobject]@{ key = $key; issue = $i }
+  }
+  return @($rows | Sort-Object key | ForEach-Object { $_.issue })
+}
+
+# Creates the week's milestone if missing and proposes the first agent items for it.
+# Planning stays human: the maintainer moves issues in or out and writes the goal.
+function Initialize-Sprint($Week, $Phase) {
+  $recent = @((Get-GhJson { gh api "repos/$Slug/milestones?state=all&sort=due_on&direction=desc&per_page=100" }) | ForEach-Object { $_ })
+  if (@($recent | Where-Object { $_.title -eq $Week.name }).Count -gt 0) { return }
+  if ($DryRun) { Write-Host "[dry-run] would create milestone $($Week.name) and propose $SprintSize items"; return }
+  $due = $Week.sunday.AddHours(23).AddMinutes(59).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+  $desc = "Sprint del $($Week.monday.ToString('yyyy-MM-dd')) al $($Week.sunday.ToString('yyyy-MM-dd')). " +
+    (U "Objetivo: lo escribe el mantenedor en la planeaci\u00f3n del lunes. ``run.ps1`` propuso los primeros $SprintSize \u00edtems del agente; aj\u00fastalos.")
+  Exec { gh api "repos/$Slug/milestones" -f "title=$($Week.name)" -f "due_on=$due" -f "description=$desc" 2>&1 } | Out-Host
+  $proposal = @(Get-BacklogQueue (Get-BacklogIssues) $Phase $Week.name | Select-Object -First $SprintSize)
+  foreach ($i in $proposal) { Exec { gh issue edit $i.number --repo $Slug --milestone $Week.name 2>&1 } | Out-Host }
+  Write-Host "Created milestone $($Week.name) with $($proposal.Count) proposed items."
+}
+
+# Highest PB-n in issue titles (any state) and in the backlog doc, plus one.
+function Get-NextPbNumber {
+  $max = 0
+  $titles = @((Get-GhJson { gh issue list --repo $Slug --label $LabelBacklog --state all --limit 1000 --json title }) | ForEach-Object { $_.title })
+  $doc = Join-Path $Clone $BacklogDoc
+  $text = ($titles -join "`n") + "`n" + $(if (Test-Path $doc) { [IO.File]::ReadAllText($doc, $Utf8) } else { '' })
+  foreach ($m in [regex]::Matches($text, 'PB-(\d+)')) { $max = [math]::Max($max, [int]$m.Groups[1].Value) }
+  return $max + 1
+}
+
+# PARTIR: the agent's "- <title> | <acceptance>" lines become new backlog issues, in order,
+# with the same labels and milestone; the original is closed pointing to them.
+# Returns $false when the answer does not have 2 to 6 parts (then it counts as blocked).
+function Split-BacklogIssue($Issue, [string]$Outcome) {
+  $lines = $Outcome.Substring(6).Trim() -split "`r?`n"
+  $parts = @($lines | Where-Object { $_ -match '^\s*[-*]\s+\S' } | ForEach-Object { ($_ -replace '^\s*[-*]\s+', '').Trim() })
+  if ($parts.Count -lt 2 -or $parts.Count -gt 6) { return $false }
+  $dot = U '\u00b7'
+  $origPb = if ($Issue.title -match '^(PB-\d+)') { $Matches[1] } else { "#$($Issue.number)" }
+  $reqs = if ([string]$Issue.body -match '(?m)^- \*\*Requisitos:\*\*.*$') { $Matches[0] } else { '' }
+  $labels = @(Get-LabelNames $Issue | Where-Object { $_ -ne $LabelBlocked })
+  $milestone = Get-MilestoneTitle $Issue
+  $n = Get-NextPbNumber
+  $created = @()
+  foreach ($part in $parts) {
+    $title, $accept = $part -split '\s+\|\s+', 2
+    $body = @(("**PB-$n** del [product backlog](https://github.com/$Slug/blob/main/docs/backlog/producto.md). " +
+      (U "Parte de $origPb (#$($Issue.number)), propuesta por el agente al partirlo.")), '')
+    if ($reqs) { $body += $reqs, '' }
+    if ($accept) { $body += (U "**Aceptaci\u00f3n y notas:** ") + $accept }
+    $ghArgs = @('issue', 'create', '--repo', $Slug, '--title', "PB-$n $dot $($title.Trim())", '--body-file', (Write-TempFile ($body -join "`n")))
+    foreach ($l in $labels) { $ghArgs += '--label', $l }
+    if ($milestone) { $ghArgs += '--milestone', $milestone }
+    $url = [string](Exec { gh @ghArgs 2>&1 } | Where-Object { "$_" -match '^https://' } | Select-Object -Last 1)
+    $created += "- PB-$n $dot $($title.Trim()): $($url.Trim())"
+    $n++
+  }
+  $note = (U "El agente lo parti\u00f3 porque no cabe en una sesi\u00f3n: ") + ($lines[0]) + "`n`n" + ($created -join "`n") + "`n`n---`n$PrFooter"
+  Exec { gh issue comment $Issue.number --repo $Slug --body-file (Write-TempFile $note) 2>&1 } | Out-Host
+  Exec { gh issue close $Issue.number --repo $Slug --reason 'not planned' 2>&1 } | Out-Host
+  return $true
 }
 
 New-Item -ItemType Directory -Force $LogDir, $BinDir | Out-Null
@@ -340,26 +450,47 @@ try {
     $done++
   }
 
-  # 2. Roadmap: one attempt per commit of main, never while a previous roadmap PR is unmerged.
-  # Merging the PR moves main and unlocks the next task; a blocked attempt waits for main to change.
-  $mainSha = ([string](Exec { git ls-remote $RemoteUrl refs/heads/main }) -split '\s+')[0]
-  $last = if (Test-Path $RoadmapStamp) { (Get-Content $RoadmapStamp -Raw).Trim() } else { '' }
-  $openRoadmap = @((Get-GhJson { gh pr list --repo $Slug --state open --limit 100 --json headRefName }) |
-    ForEach-Object { $_ } | Where-Object { $_.headRefName -like 'agent/roadmap-*' })
-  if ($SkipRoadmap) { Write-Host 'Roadmap skipped by flag.' }
-  elseif ($StopRun) { Write-Host 'Roadmap skipped: a transient error stopped this run.' }
+  # 2. Backlog: one item per run, never while a previous backlog PR is unmerged, so merging it
+  # unlocks the next one. A blocked item gets `agent:bloqueado` and the next run takes the next
+  # item; a transient failure leaves it untouched for a retry. Older agent/roadmap-* PRs also gate.
+  $openBacklog = @((Get-GhJson { gh pr list --repo $Slug --state open --limit 100 --json headRefName }) |
+    ForEach-Object { $_ } | Where-Object { $_.headRefName -like 'agent/backlog-*' -or $_.headRefName -like 'agent/roadmap-*' })
+  if ($SkipBacklog) { Write-Host 'Backlog skipped by flag.' }
+  elseif ($StopRun) { Write-Host 'Backlog skipped: a transient error stopped this run.' }
   elseif (Test-Paused) { }
-  elseif ($openRoadmap.Count -gt 0) { Write-Host "Roadmap PR still open: $($openRoadmap[0].headRefName)." }
-  elseif ($last -eq $mainSha) { Write-Host "Roadmap already attempted on main $($mainSha.Substring(0, 7)); waiting for main to change." }
+  elseif ($openBacklog.Count -gt 0) { Write-Host "Backlog PR still open: $($openBacklog[0].headRefName)." }
   else {
-    if (-not $DryRun) { Set-Content -Path $RoadmapStamp -Value $mainSha -Encoding ascii }
-    $prompt = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'prompt-roadmap.md'), $Utf8)
-    $outcome = Invoke-Task "agent/roadmap-$RunId" $prompt ''
-    Write-Host "Roadmap: $outcome"
-    Add-RunRow 'roadmap' $outcome
-    # A transient failure does not use up the attempt for this commit of main.
-    if ($outcome -like 'retry:*' -and -not $DryRun) {
-      if ($last) { Set-Content -Path $RoadmapStamp -Value $last -Encoding ascii } else { Remove-Item $RoadmapStamp -Force }
+    Reset-Clone
+    $phase = Get-PhaseConfig
+    if (-not $phase) { Write-Host "No 'Fase actual' in $BacklogDoc on main; backlog skipped." }
+    else {
+      $week = Get-SprintWeek
+      Initialize-Sprint $week $phase
+      # One ls-remote for all branches: a branch means a PR was opened (to retry, delete it).
+      $taken = @(Exec { git ls-remote --heads $RemoteUrl 'agent/backlog-*' } | ForEach-Object { ($_ -split 'refs/heads/')[-1] })
+      $queue = @(Get-BacklogQueue (Get-BacklogIssues) $phase $week.name | Where-Object { $taken -notcontains "agent/backlog-$($_.number)" })
+      Write-Host "Backlog: phase $($phase.current) (ahead: $($phase.ahead)), sprint $($week.name), $($queue.Count) items for the agent."
+      if ($queue.Count -eq 0) { Write-Host 'Nothing for the agent in the sprint, the current phase or the phase ahead.' }
+      else {
+        $item = $queue[0]
+        # The sprint shows what was actually worked on, even when the agent pulled it from the phase.
+        if (-not $DryRun -and (Get-MilestoneTitle $item) -ne $week.name) {
+          Exec { gh issue edit $item.number --repo $Slug --milestone $week.name 2>&1 } | Out-Host
+        }
+        $template = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'prompt-backlog.md'), $Utf8)
+        $prompt = "$template`n#$($item.number): $($item.title)`n`n$($item.body)`n"
+        $outcome = Invoke-Task "agent/backlog-$($item.number)" $prompt ([string]$item.number)
+        Write-Host "Backlog #$($item.number): $outcome"
+        Add-RunRow "#$($item.number) $($item.title)" $outcome
+        if ($outcome -like 'split:*' -and -not (Split-BacklogIssue $item $outcome)) {
+          $outcome = 'blocked: el agente pidio partir el item pero no dio entre 2 y 6 partes.' + "`n`n" + $outcome.Substring(6).Trim()
+        }
+        if ($outcome -like 'blocked:*') {
+          Exec { gh issue comment $item.number --repo $Slug --body-file (Write-TempFile ("El agente no pudo resolver este item.`n`n$($outcome.Substring(8).Trim())`n`n" +
+            "Para que lo vuelva a intentar, responde lo que pide y quita la etiqueta ``$LabelBlocked``.`n`n---`n$PrFooter")) 2>&1 } | Out-Host
+          Exec { gh issue edit $item.number --repo $Slug --add-label $LabelBlocked 2>&1 } | Out-Host
+        }
+      }
     }
   }
 }
