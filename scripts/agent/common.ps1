@@ -38,3 +38,42 @@ function Get-SprintWeek([datetime]$Day = (Get-Date)) {
     sunday = $monday.AddDays(6)
   }
 }
+
+# --- Gemini agent: Antigravity CLI (agy) ---------------------------------------
+# agy has no flag or variable for another config dir, so the agent's rules live in the
+# user's own settings.json. install.ps1 -Engine gemini adds them (and -Uninstall removes
+# them); run.ps1 refuses to start without them. Same lists as $ClaudeSettings in run.ps1.
+$AgyAllow = @(
+  'command(pnpm *)', 'command(node *)',
+  'command(git status*)', 'command(git diff*)', 'command(git log*)', 'command(git show*)',
+  'command(git add *)', 'command(git commit *)', 'command(git rm *)', 'command(git mv *)', 'command(git restore *)',
+  'command(ls*)', 'command(cat *)', 'command(head *)', 'command(tail *)', 'command(wc *)',
+  'command(grep *)', 'command(find *)', 'command(sort *)', 'command(diff *)', 'command(mkdir *)'
+)
+$AgyDeny = @(
+  'command(git push*)', 'command(git remote*)', 'command(git config*)', 'command(gh)', 'command(gh *)',
+  'command(pnpm *deploy*)', 'command(pnpm *wrangler*)', 'command(pnpm *--remote*)',
+  'command(node *deploy*)', 'command(node *wrangler*)', 'command(node *--remote*)',
+  'command(pnpm add*)', 'command(pnpm remove*)', 'command(pnpm up*)', 'command(pnpm update*)',
+  'command(pnpm dlx*)', 'command(pnpm publish*)', 'command(npx *)', 'command(curl *)', 'command(wget *)',
+  'command(Invoke-WebRequest*)', 'command(Invoke-RestMethod*)', 'command(iwr *)', 'command(irm *)'
+)
+
+function Get-AgySettingsPath {
+  return Join-Path (Join-Path (Join-Path $env:USERPROFILE '.gemini') 'antigravity-cli') 'settings.json'
+}
+
+# Throws unless agy is set up for the agent: Google account (no API key provider),
+# no blanket auto-approval, and every allow and deny rule above present.
+function Assert-AgySettings {
+  $f = Get-AgySettingsPath
+  if (-not (Test-Path $f)) { throw "No existe $f. Abre ``agy`` una vez, inicia sesion con Google y corre install.ps1 -Engine gemini." }
+  $cfg = [IO.File]::ReadAllText($f, (New-Object System.Text.UTF8Encoding $false)) | ConvertFrom-Json
+  if ((Get-Prop $cfg 'modelProvider') -eq 'gemini') { throw 'agy usa modelProvider "gemini" (API key); el agente solo usa la cuenta de Google.' }
+  if ((Get-Prop $cfg 'toolPermission') -eq 'always-proceed') { throw 'agy tiene toolPermission "always-proceed", que aprobaria todo; el agente no corre asi.' }
+  $perm = Get-Prop $cfg 'permissions'
+  $allow = @(Get-Prop $perm 'allow')
+  $deny = @(Get-Prop $perm 'deny')
+  $missing = @($AgyAllow | Where-Object { $allow -notcontains $_ }) + @($AgyDeny | Where-Object { $deny -notcontains $_ })
+  if ($missing.Count -gt 0) { throw "Faltan $($missing.Count) reglas del agente en $f; corre install.ps1 -Engine gemini." }
+}

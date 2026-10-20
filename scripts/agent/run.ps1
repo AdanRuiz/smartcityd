@@ -11,8 +11,9 @@
   checks protected paths, runs build/lint/typecheck/test, pushes the branch and
   opens the PR. Nothing is ever merged or deployed. See docs/operacion/agente.md.
 
-  With -Engine gemini it is a second, parallel agent: Gemini CLI signed in with
-  the user's Google account (never an API key), its own clone and state under
+  With -Engine gemini it is a second, parallel agent: Gemini through the
+  Antigravity CLI (agy), signed in with the user's Google account (never an API
+  key), its own clone and state under
   %LOCALAPPDATA%\smartcity-agent-gemini, only backlog issues labeled `gemini`
   and no bugs. Claude skips those issues, so the two never take the same item.
 
@@ -24,7 +25,7 @@ param(
   [int]$MaxIssues = 3,
   [int]$TaskTimeoutMinutes = 45,
   # Pinned so a CLI update cannot silently change the model behind the PRs.
-  # Empty means the engine default: claude-opus-5-5 or gemini-2.5-pro.
+  # Empty means the engine default: claude-opus-5-5 or gemini-3.8-flash-high (see `agy models`).
   [string]$Model = '',
   [Alias('SkipRoadmap')]
   [switch]$SkipBacklog,
@@ -42,10 +43,8 @@ $OutputEncoding = $Utf8
 
 $SourceRepo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $IsGemini = $Engine -eq 'gemini'
-if (-not $Model) { $Model = if ($IsGemini) { 'gemini-2.5-pro' } else { 'claude-opus-5-5' } }
+if (-not $Model) { $Model = if ($IsGemini) { 'gemini-3.8-flash-high' } else { 'claude-opus-5-5' } }
 $StateDir = Join-Path $env:LOCALAPPDATA $(if ($IsGemini) { 'smartcity-agent-gemini' } else { 'smartcity-agent' })
-# Gemini CLI reads its settings and Google sign-in from here instead of the user's ~/.gemini.
-$GeminiHome = Join-Path $StateDir 'home'
 $Clone = Join-Path $StateDir 'repo'
 $BinDir = Join-Path $StateDir 'bin'
 $LogDir = Join-Path $StateDir 'logs'
@@ -59,7 +58,7 @@ if (-not $PromptVersion) { $PromptVersion = 'sin-version' }
 if (Exec { git -C $SourceRepo status --porcelain -- @PromptFiles } -AllowFail) { $PromptVersion += '+local' }
 $CliVersion = 'desconocida'
 try {
-  $CliVersion = if ($IsGemini) { ([string](Exec { gemini.cmd --version } -AllowFail)).Trim() }
+  $CliVersion = if ($IsGemini) { ([string](Exec { agy.exe --version } -AllowFail)).Trim() }
     else { ([string](Exec { claude.cmd --version } -AllowFail) -split ' ')[0] }
 } catch { }
 
@@ -85,42 +84,8 @@ $LastPrUrl = ''
 # Paths the agent must never change; a PR touching them is not opened.
 $ProtectedPaths = '^(\.github/|scripts/agent/|LICENSE$|pnpm-lock\.yaml$|.*\.env|.*\.dev\.vars$)'
 $PrFooter = "Generado sin supervision por ``scripts/agent/run.ps1`` ($RunId, prompts ``$PromptVersion``, modelo ``$Model``, $Engine ``$CliVersion``). Revisar antes de mezclar.`n`n" +
-  [char]::ConvertFromUtf32(0x1F916) + $(if ($IsGemini) { ' Generado con [Gemini CLI](https://github.com/google-gemini/gemini-cli)' } else { ' Generated with [Claude Code](https://claude.com/claude-code)' })
+  [char]::ConvertFromUtf32(0x1F916) + $(if ($IsGemini) { ' Generado con Gemini en [Antigravity CLI](https://antigravity.google)' } else { ' Generated with [Claude Code](https://claude.com/claude-code)' })
 
-# Same allow and deny lists as $ClaudeSettings, as a Gemini CLI policy. It is loaded with
-# --admin-policy, the top tier, so neither the user's nor the workspace's policies can widen it.
-# Headless mode denies whatever is not allowed here (`ask_user` counts as deny).
-$GeminiPolicy = @'
-[[rule]]
-toolName = ["read_file", "read_many_files", "list_directory", "glob", "grep_search", "write_file", "replace", "write_todos"]
-decision = "allow"
-priority = 100
-
-[[rule]]
-toolName = "run_shell_command"
-commandPrefix = ["pnpm", "node", "git status", "git diff", "git log", "git show", "git add", "git commit", "git rm", "git mv", "git restore", "ls", "cat", "head", "tail", "wc", "grep", "find", "sort", "diff", "mkdir"]
-decision = "allow"
-priority = 100
-
-[[rule]]
-toolName = "run_shell_command"
-commandPrefix = ["git push", "git remote", "git config", "gh", "pnpm add", "pnpm remove", "pnpm up", "pnpm update", "pnpm dlx", "pnpm publish", "npx", "curl", "wget", "powershell", "pwsh"]
-decision = "deny"
-priority = 900
-denyMessage = "Prohibido para el agente sin supervision (scripts/agent/run.ps1)."
-
-[[rule]]
-toolName = "run_shell_command"
-commandRegex = "^(pnpm|node)\\b.*(deploy|wrangler|--remote)"
-decision = "deny"
-priority = 900
-denyMessage = "Desplegar esta prohibido para el agente."
-
-[[rule]]
-toolName = ["web_fetch", "google_web_search", "activate_skill"]
-decision = "deny"
-priority = 900
-'@
 
 # Permissions for the headless session. Everything not allowed is denied, since
 # -p mode cannot prompt. Deploys are also blocked by a bogus Cloudflare token.
@@ -220,56 +185,64 @@ function Invoke-Claude([string]$Prompt, [string]$Tag) {
   return @{ status = 'ok'; text = $result }
 }
 
-# Same contract as Invoke-Claude, for Gemini CLI signed in with Google (oauth-personal).
+# Same contract as Invoke-Claude, for Gemini through the Antigravity CLI (agy).
+# agy -p does not read stdin and a long prompt does not survive the command line, so the
+# task goes in a file at the root of the clone, excluded from git and deleted afterwards.
+# In headless mode agy soft-denies every tool its settings do not allow (it never waits).
 function Invoke-Gemini([string]$Prompt, [string]$Tag) {
-  $promptFile = Join-Path $StateDir "prompt-$RunId.md"
-  $policyFile = Join-Path $StateDir 'gemini-policy.toml'
-  $outFile = Join-Path $LogDir "$RunId-$Tag-gemini.json"
-  $errFile = Join-Path $LogDir "$RunId-$Tag-gemini.err"
-  [IO.File]::WriteAllText($promptFile, $Prompt, $Utf8)
-  [IO.File]::WriteAllText($policyFile, $GeminiPolicy, $Utf8)
-
-  $exe = Get-Command gemini.cmd -ErrorAction SilentlyContinue | Select-Object -First 1
-  # The prompt arrives on stdin; -p only switches to headless mode and is appended to it.
-  $argLine = "-p `"Sigue las instrucciones de arriba.`" --model $Model --output-format json --approval-mode auto_edit --skip-trust --admin-policy `"$policyFile`""
-  $clock = [Diagnostics.Stopwatch]::StartNew()
-  $p = Start-Process -FilePath $exe.Source -ArgumentList $argLine -WorkingDirectory $Clone `
-    -RedirectStandardInput $promptFile -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
-    -NoNewWindow -PassThru
-  $null = $p.Handle
-  if (-not $p.WaitForExit($TaskTimeoutMinutes * 60000)) {
-    Write-Host "Gemini exceeded $TaskTimeoutMinutes min; killing it."
-    Exec { taskkill /PID $p.Id /T /F 2>&1 } -AllowFail | Out-Host
-    return @{ status = 'error'; text = "la sesion excedio $TaskTimeoutMinutes min; conviene partir la tarea" }
+  $outFile = Join-Path $LogDir "$RunId-$Tag-agy.json"
+  $errFile = Join-Path $LogDir "$RunId-$Tag-agy.err"
+  $taskName = '.agent-task.md'
+  $taskFile = Join-Path $Clone $taskName
+  $infoDir = Join-Path (Join-Path $Clone '.git') 'info'
+  New-Item -ItemType Directory -Force $infoDir | Out-Null
+  $exclude = Join-Path $infoDir 'exclude'
+  if (-not ((Test-Path $exclude) -and (Select-String -Path $exclude -SimpleMatch "/$taskName" -Quiet))) {
+    Add-Content -Path $exclude -Value "/$taskName" -Encoding ascii
   }
+  [IO.File]::WriteAllText($taskFile, $Prompt, $Utf8)
+
+  $exe = Get-Command agy.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+  $ask = "Lee el archivo $taskName de la raiz del repositorio y sigue sus instrucciones al pie de la letra. No lo modifiques ni lo agregues a git."
+  $argLine = "--output-format json --model $Model --mode accept-edits --print-timeout $($TaskTimeoutMinutes)m -p `"$ask`""
+  $clock = [Diagnostics.Stopwatch]::StartNew()
+  try {
+    $p = Start-Process -FilePath $exe.Source -ArgumentList $argLine -WorkingDirectory $Clone `
+      -RedirectStandardOutput $outFile -RedirectStandardError $errFile -NoNewWindow -PassThru
+    $null = $p.Handle
+    if (-not $p.WaitForExit(($TaskTimeoutMinutes + 2) * 60000)) {
+      Write-Host "agy exceeded $TaskTimeoutMinutes min; killing it."
+      Exec { taskkill /PID $p.Id /T /F 2>&1 } -AllowFail | Out-Host
+      return @{ status = 'error'; text = "la sesion excedio $TaskTimeoutMinutes min; conviene partir la tarea" }
+    }
+  }
+  finally { Remove-Item $taskFile -Force -ErrorAction SilentlyContinue }
+
   $raw = [IO.File]::ReadAllText($outFile, $Utf8)
   $stderr = if (Test-Path $errFile) { [IO.File]::ReadAllText($errFile, $Utf8).Trim() } else { '' }
-  # Warnings may precede the JSON object on stdout.
   $start = $raw.IndexOf('{')
   try { $json = if ($start -ge 0) { $raw.Substring($start) | ConvertFrom-Json } else { $null } } catch { $json = $null }
   if ($null -eq $json) {
     $why = (($stderr -split "`r?`n") | Where-Object { $_ } | Select-Object -First 1)
-    Write-Host "Unreadable Gemini output. stdout: $raw stderr: $stderr"
-    $kind = if ("$raw $stderr" -match $TransientText) { 'transient' } else { 'error' }
-    return @{ status = $kind; text = "la CLI de Gemini no respondio: $why" }
+    Write-Host "Unreadable agy output (exit $($p.ExitCode)). stdout: $raw stderr: $stderr"
+    if ($stderr -match 'auth') { return @{ status = 'error'; text = "agy no tiene sesion de Google: abre ``agy`` e inicia sesion. $why" } }
+    $kind = if ($stderr -match $TransientText) { 'transient' } else { 'error' }
+    return @{ status = $kind; text = "la CLI de Antigravity no respondio: $why" }
   }
-  $stats = Get-Prop $json 'stats'
-  $models = Get-Prop $stats 'models'
-  $requests = 0
-  if ($models) { foreach ($m in $models.PSObject.Properties) { $requests += [int](Get-Prop (Get-Prop $m.Value 'api') 'totalRequests') } }
   $script:LastStats = @{
-    turns = $requests
+    turns = Get-Prop $json 'num_turns'
     minutes = [math]::Round($clock.Elapsed.TotalMinutes, 1)
-    denials = [int](Get-Prop (Get-Prop (Get-Prop $stats 'tools') 'totalDecisions') 'reject')
+    denials = @(Get-Prop $json 'denied_actions' | Where-Object { $null -ne $_ }).Count
     usd = $null
-    model = if ($models) { @($models.PSObject.Properties | ForEach-Object { $_.Name }) -join ', ' } else { '' }
+    model = $Model
   }
-  $err = Get-Prop $json 'error'
-  if ($err -or $p.ExitCode -ne 0) {
-    $msg = if ($err) { "$(Get-Prop $err 'type') $(Get-Prop $err 'message')".Trim() } else { "codigo de salida $($p.ExitCode)" }
-    Write-Host "Gemini reported an error: $msg"
+  $status = [string](Get-Prop $json 'status')
+  if ($status -ne 'SUCCESS' -or $p.ExitCode -ne 0) {
+    $msg = "$status $(Get-Prop $json 'error')".Trim()
+    Write-Host "agy reported an error (exit $($p.ExitCode)): $msg"
+    if ("$msg $stderr" -match 'timeout|timed out|deadline') { return @{ status = 'error'; text = "la sesion excedio $TaskTimeoutMinutes min; conviene partir la tarea" } }
     $transient = "$msg $stderr" -match $TransientText
-    return @{ status = $(if ($transient) { 'transient' } else { 'error' }); text = "error de Gemini: $msg" }
+    return @{ status = $(if ($transient) { 'transient' } else { 'error' }); text = "error de agy: $msg" }
   }
   return @{ status = 'ok'; text = [string](Get-Prop $json 'response') }
 }
@@ -509,20 +482,16 @@ try {
     if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) { throw "$cmd is not in PATH. See docs/operacion/agente.md." }
   }
   if ($IsGemini) {
-    if (-not (Get-Command gemini.cmd -ErrorAction SilentlyContinue)) { throw 'gemini is not in PATH.' }
-    # Google sign-in only: an API key would be billed. The one-time sign-in is in docs/operacion/agente.md.
-    if (-not (Test-Path (Join-Path $GeminiHome '.gemini\oauth_creds.json'))) {
-      throw "Gemini no tiene sesion de Google en $GeminiHome. Ver docs/operacion/agente.md, 'Agente Gemini'."
-    }
+    if (-not (Get-Command agy.exe -ErrorAction SilentlyContinue)) { throw 'agy (Antigravity CLI) is not in PATH.' }
+    Assert-AgySettings
   }
   elseif (-not (Get-Command claude.exe, claude.cmd -ErrorAction SilentlyContinue)) { throw 'claude is not in PATH.' }
 
   # Subscription auth only: an API key in the environment would bill the API instead.
   Remove-Item Env:ANTHROPIC_API_KEY, Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue
   if ($IsGemini) {
-    Remove-Item Env:GEMINI_API_KEY, Env:GOOGLE_API_KEY, Env:GOOGLE_GENAI_USE_VERTEXAI, Env:GOOGLE_GENAI_USE_GCA, Env:GOOGLE_CLOUD_ACCESS_TOKEN -ErrorAction SilentlyContinue
-    $env:GEMINI_CLI_HOME = $GeminiHome
-    $env:GEMINI_DEFAULT_AUTH_TYPE = 'oauth-personal'
+    # agy uses the Google sign-in in the Windows keyring; these would only matter with an API key.
+    Remove-Item Env:GEMINI_API_KEY, Env:GOOGLE_API_KEY, Env:AGY_ADC_AUTH, Env:GOOGLE_GEMINI_BASE_URL -ErrorAction SilentlyContinue
   }
   $env:CLOUDFLARE_API_TOKEN = 'disabled-for-smartcity-agent'
   $env:GIT_TERMINAL_PROMPT = '0'
@@ -611,7 +580,7 @@ try {
         }
         $template = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'prompt-backlog.md'), $Utf8)
         # The commit trailer names the model that actually wrote the code.
-        if ($IsGemini) { $template = $template.Replace('Co-Authored-By: Claude <noreply@anthropic.com>', 'Assisted-by: Gemini CLI') }
+        if ($IsGemini) { $template = $template.Replace('Co-Authored-By: Claude <noreply@anthropic.com>', 'Assisted-by: Gemini (Antigravity CLI)') }
         $prompt = "$template`n#$($item.number): $($item.title)`n`n$($item.body)`n"
         $outcome = Invoke-Task "$BranchPrefix$($item.number)" $prompt ([string]$item.number)
         Write-Host "Backlog #$($item.number): $outcome"
