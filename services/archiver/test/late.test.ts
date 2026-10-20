@@ -32,18 +32,29 @@ const deletion = (target: SignedEvent, createdAt: number) =>
 /**
  * Relays over `fetch` as the reference relay answers them: `received_after` in order of receipt (each store keeps
  * the order its events arrived) with the cursor line always last, the export of a day, and kind 5 by `since`.
- * `asked` collects every URL, to check which routes the archiver uses.
+ * `asked` collects every URL, to check which routes the archiver uses. A `routeless` relay answers
+ * `received_after` as the reference relay did before it existed; `maxAge` is the `created_at_lower_limit` its
+ * NIP-11 document declares, if any.
  */
-function relays(stores: Record<string, SignedEvent[]>, asked: string[] = [], page = 1000, routeless = new Set<string>()): Fetch {
-  return async (raw) => {
+function relays(
+  stores: Record<string, SignedEvent[]>,
+  asked: string[] = [],
+  page = 1000,
+  routeless = new Set<string>(),
+  maxAge: Record<string, number> = {},
+): Fetch {
+  return async (raw, init) => {
     asked.push(raw)
     const url = new URL(raw)
     const events = stores[url.origin]
     if (!events) return new Response('down', { status: 503 })
     const exported = events.filter((e) => e.kind !== NOSTR_KIND.DELETION || e.tags.some((t) => t[0] === 'c'))
     const lines: string[] = []
+    if (url.pathname === '/' && init?.headers?.Accept === 'application/nostr+json') {
+      return Response.json({ name: url.host, limitation: { created_at_lower_limit: maxAge[url.origin] } })
+    }
     if (url.pathname === '/v1/export' && url.searchParams.has('received_after')) {
-      if (routeless.has(url.origin)) return new Response('{"ok":false,"reason":"unsupported: received_after"}', { status: 400 })
+      if (routeless.has(url.origin)) return new Response('{"ok":false,"reason":"unknown parameter: received_after"}', { status: 400 })
       const after = url.searchParams.get('received_after')!
       const start = after === '0' ? 0 : Number(after)
       const slice = exported.slice(start, start + page)
@@ -51,6 +62,14 @@ function relays(stores: Record<string, SignedEvent[]>, asked: string[] = [], pag
     } else if (url.pathname === '/v1/export') {
       const day = url.searchParams.get('day')!
       lines.push(...exported.filter((e) => new Date(e.created_at * 1000).toISOString().startsWith(day)).sort(compareCanonical).map(canonicalLine))
+    } else if (url.pathname === '/v1/events' && url.searchParams.has('c')) {
+      // Newest first, capped at `page` as the relay caps `limit` (docs/spec/07, "Suscripciones").
+      const city = url.searchParams.get('c')
+      const since = Number(url.searchParams.get('since') ?? 0)
+      const until = Number(url.searchParams.get('until') ?? Infinity)
+      const matching = events.filter((e) => e.tags.some((t) => t[0] === 'c' && t[1] === city) && e.created_at >= since && e.created_at <= until)
+      matching.sort((x, y) => y.created_at - x.created_at || x.id.localeCompare(y.id))
+      lines.push(...matching.slice(0, page).map((e) => JSON.stringify(e)))
     } else if (url.pathname === '/v1/events') {
       const since = Number(url.searchParams.get('since'))
       const until = Number(url.searchParams.get('until') ?? Infinity)
@@ -161,6 +180,46 @@ describe('archiver late (SNAP-8)', () => {
     const second = await runLate(options, { fetch: relays(store), now: AFTER_GRACE + 120, log: () => {} })
     expect(second.addenda[0]!.snapshot.ndjson).toBe(canonicalLine(late) + '\n')
     expect(second.cursors).toEqual({ 'wss://a.example': '1', 'wss://b.example': '1' })
+  })
+
+  it('reads a relay without received_after by since over the maximum age of its NIP-11 document', async () => {
+    const MAX_AGE = 30 * 86_400
+    const first = observation(FROM + 1)
+    const a = [first] // without the route, with a declared maximum age
+    const b = [first] // with the route
+    const c = [first] // without the route and without a maximum age
+    const store = { 'https://a.example': a, 'https://b.example': b, 'https://c.example': c }
+    const routeless = new Set(['https://a.example', 'https://c.example'])
+    const ages = { 'https://a.example': MAX_AGE }
+    const out = await mkdtemp(join(tmpdir(), 'archiver-late-'))
+    const options = { city: CITY, relays: ['wss://a.example', 'wss://b.example', 'wss://c.example'], out }
+    await runSnapshot({ ...options, day: DAY }, { fetch: relays(store), now: AFTER_GRACE, log: () => {} })
+
+    // Late events of DAY reach a only; two of them and one of an unarchived day, over pages of 2.
+    const late = [observation(FROM + 2), observation(FROM + 3)]
+    a.push(...late, observation(TO + 5))
+    const asked: string[] = []
+    const logs: string[] = []
+    const now = AFTER_GRACE + 3600
+    const fetch = relays(store, asked, 2, routeless, ages)
+    const result = await runLate(options, { fetch, now, log: (l) => logs.push(l) })
+
+    expect(result.addenda.map((x) => x.day)).toEqual([DAY])
+    expect(result.addenda[0]!.snapshot.ndjson).toBe(canonicalNdjson(late))
+    const asks = asked.filter((u) => u.startsWith('https://a.example/v1/events?') && u.includes('c='))
+    expect(asks.length).toBeGreaterThan(1)
+    expect(asks.every((u) => new URL(u).searchParams.get('since') === String(now - MAX_AGE))).toBe(true)
+    expect(asked.some((u) => u.includes('day='))).toBe(false)
+    expect(logs.some((l) => l.includes('wss://a.example') && l.includes('no received_after') && l.includes('30 days'))).toBe(true)
+    // Without a declared maximum there is no bounded window: c fails. a keeps no cursor; b keeps its own.
+    expect(result.failed.map((f) => f.relay)).toEqual(['wss://c.example'])
+    expect(result.failed[0]!.reason).toMatch(/created_at_lower_limit/)
+    expect(result.cursors).toEqual({ 'wss://b.example': '1' })
+
+    // a is read over the whole window again, but the published files keep the events from repeating.
+    const again = await runLate(options, { fetch, now: now + 3600, log: () => {} })
+    expect(again.addenda).toEqual([])
+    await expect(readFile(join(out, `sc_${CITY}_${DAY}_a2.ndjson.gz`))).rejects.toThrow()
   })
 
   it('writes nothing and keeps the cursors when no relay can be read, and refuses a broken cursor file', async () => {

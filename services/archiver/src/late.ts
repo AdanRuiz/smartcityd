@@ -2,7 +2,16 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isCityId, utcDayRange } from '@smartcity/schemas'
 import { buildAddendum, type DailySnapshot } from './daily.js'
-import { RECEIVED_START, fetchDeletions, fetchReceived, wsUrl } from './relays.js'
+import {
+  HttpError,
+  RECEIVED_START,
+  fetchCitySince,
+  fetchDeletions,
+  fetchMaxAge,
+  fetchReceived,
+  wsUrl,
+  type Fetch,
+} from './relays.js'
 import { exists, paths, publishedDay, write, type Files, type SnapshotDeps, type SnapshotOptions } from './snapshot.js'
 
 export type LateOptions = Omit<SnapshotOptions, 'day'>
@@ -19,7 +28,27 @@ export interface LateResult {
 interface Read {
   relay: string
   events: unknown[]
-  cursor: string
+  /** Null for a relay read by `since`: it has no cursor, and the one saved for it, if any, stays. */
+  cursor: string | null
+}
+
+// Answers of a relay that lacks `received_after` (the reference relay before it, `unknown parameter`, is a 400).
+const NO_ROUTE = new Set([400, 404, 405, 501])
+
+const DAY_SECONDS = 86_400
+
+/**
+ * Alternative of SNAP-8 for a relay without `received_after`: the events of the city it holds created within the
+ * maximum age it declares in NIP-11 (RELAY-5), since a late event it accepts cannot be older. Without a declared
+ * maximum there is no bounded window, and the relay fails.
+ */
+async function readWindow(fetch: Fetch, relay: string, city: string, now: number, log: (line: string) => void) {
+  const maxAge = await fetchMaxAge(fetch, relay)
+  if (maxAge === null) throw new Error('no received_after and no created_at_lower_limit in its NIP-11 document')
+  const events = await fetchCitySince(fetch, relay, city, now - maxAge, log)
+  const days = Math.round((maxAge / DAY_SECONDS) * 10) / 10
+  log(`${relay}: no received_after; ${events.length} events created in the last ${days} days (NIP-11 maximum age)`)
+  return events
 }
 
 /** File in `--out` where the archiver keeps the `received_after` cursor of each relay of a city (SNAP-8). */
@@ -57,8 +86,9 @@ function dayOf(value: unknown): string | null {
  * of a day whose daily file is in `--out` go to a new addendum of that day (SNAP-2), with the same checks and
  * deletions as `archiver addendum` (SNAP-3, SNAP-5); events of other days are left for `archiver snapshot`, which
  * reads the whole day. Cursors are saved only after the addenda are written, so an interrupted run asks again
- * from the same place and the published files keep it from repeating events. A relay that fails, or lacks the
- * route, is reported and its cursor stays; with none readable nothing is written.
+ * from the same place and the published files keep it from repeating events. A relay that lacks the route is
+ * read by `since` over the maximum age it declares in NIP-11 instead, each run, and keeps no cursor. A relay that
+ * fails is reported and its cursor stays; with none readable nothing is written.
  */
 export async function runLate(options: LateOptions, deps: SnapshotDeps): Promise<LateResult> {
   if (!isCityId(options.city)) throw new Error(`--city must be a city id: ${options.city}`)
@@ -72,15 +102,21 @@ export async function runLate(options: LateOptions, deps: SnapshotDeps): Promise
     failed.push({ relay, reason })
     deps.log(`${relay}: skipped (${reason})`)
   }
-  const received = await Promise.allSettled(
-    options.relays.map((relay) => fetchReceived(deps.fetch, relay, options.city, saved[wsUrl(relay)] ?? RECEIVED_START)),
-  )
+  const readRelay = async (relay: string): Promise<Read> => {
+    try {
+      const value = await fetchReceived(deps.fetch, relay, options.city, saved[wsUrl(relay)] ?? RECEIVED_START)
+      deps.log(`${relay}: ${value.events.length} events received since the last run`)
+      return { relay, ...value }
+    } catch (error) {
+      if (!(error instanceof HttpError && NO_ROUTE.has(error.status))) throw error
+      return { relay, events: await readWindow(deps.fetch, relay, options.city, deps.now, deps.log), cursor: null }
+    }
+  }
+  const received = await Promise.allSettled(options.relays.map(readRelay))
   let read: Read[] = []
   received.forEach((result, i) => {
-    const relay = options.relays[i]!
-    if (result.status === 'rejected') return fail(relay, result.reason)
-    deps.log(`${relay}: ${result.value.events.length} events received since the last run`)
-    read.push({ relay, ...result.value })
+    if (result.status === 'rejected') return fail(options.relays[i]!, result.reason)
+    read.push(result.value)
   })
   if (read.length === 0) throw new Error('no relay could be read')
 
@@ -144,7 +180,7 @@ export async function runLate(options: LateOptions, deps: SnapshotDeps): Promise
   }
 
   const cursors = { ...saved }
-  for (const { relay, cursor } of read) cursors[wsUrl(relay)] = cursor
+  for (const { relay, cursor } of read) if (cursor !== null) cursors[wsUrl(relay)] = cursor
   // Through a temporary file, so an interrupted write never leaves a broken cursor file behind.
   await mkdir(options.out, { recursive: true })
   await writeFile(`${cursorFile}.tmp`, JSON.stringify(cursors, null, 2) + '\n')
