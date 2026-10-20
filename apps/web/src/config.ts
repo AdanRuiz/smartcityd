@@ -23,6 +23,13 @@ export interface CityConfig {
 
 export const SEED_RELAYS = ['wss://smartcity-relay.adan0001.workers.dev', 'wss://smartcity-relay-b.adan0001.workers.dev']
 
+/**
+ * APP-5, APP-8: developer keys whose `release` events (kind 31486, docs/spec/06) announce the versions of this app.
+ * They go embedded in the build and the user may change them in settings (APP-5). Empty until the project designates
+ * them; while empty the app has no key it trusts to announce a new version and does not warn about updates.
+ */
+export const DEVELOPERS: string[] = []
+
 export const CITIES: CityConfig[] = [
   {
     id: 'mx-gdl',
