@@ -533,7 +533,8 @@ try {
     # The one engine that bills per token, on purpose: the user's OpenRouter key (cap its credit
     # limit on openrouter.ai). A config dir of its own keeps the subscription login out of reach.
     $key = $env:OPENROUTER_API_KEY
-    if (-not $key) { $key = [Environment]::GetEnvironmentVariable('OPENROUTER_API_KEY', 'User') }
+    # User first, as Windows does when it builds a new process environment.
+    foreach ($scope in 'User', 'Machine') { if (-not $key) { $key = [Environment]::GetEnvironmentVariable('OPENROUTER_API_KEY', $scope) } }
     if (-not $key) { throw 'OPENROUTER_API_KEY is not set. See docs/operacion/agente.md.' }
     $env:ANTHROPIC_BASE_URL = 'https://openrouter.ai/api'
     $env:ANTHROPIC_AUTH_TOKEN = $key

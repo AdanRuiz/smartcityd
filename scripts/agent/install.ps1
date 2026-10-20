@@ -64,9 +64,9 @@ if ($Engine -eq 'gemini') {
   Update-AgyRules
   Assert-AgySettings
 }
-# The scheduled task only sees the key if it is a user (not session) variable.
-if ($Engine -eq 'openrouter' -and -not [Environment]::GetEnvironmentVariable('OPENROUTER_API_KEY', 'User')) {
-  throw 'Define OPENROUTER_API_KEY as a user variable first. See docs/operacion/agente.md.'
+# The scheduled task only sees the key if it is a user or system (not session) variable.
+if ($Engine -eq 'openrouter' -and -not ([Environment]::GetEnvironmentVariable('OPENROUTER_API_KEY', 'User') -or [Environment]::GetEnvironmentVariable('OPENROUTER_API_KEY', 'Machine'))) {
+  throw 'Define OPENROUTER_API_KEY as a user or system variable first. See docs/operacion/agente.md.'
 }
 
 $script = Join-Path $PSScriptRoot 'run.ps1'

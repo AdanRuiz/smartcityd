@@ -99,7 +99,7 @@ Un tercer motor, `run.ps1 -Engine openrouter`, corre Claude Code apuntado a [Ope
 - **Aislado de la suscripción:** usa su propia carpeta de configuración de Claude Code (`CLAUDE_CONFIG_DIR` en `%LOCALAPPDATA%\smartcity-agent-openrouter\claude-config`), así que nunca ve la sesión del mantenedor. Clon y logs, en la misma carpeta.
 - **Costo:** la columna *USD eq. API* queda vacía para este motor, porque Claude Code calcula con tarifas de Anthropic. El gasto real está en el panel de OpenRouter. **Pon un límite de crédito a la llave en openrouter.ai.** Sin crédito, OpenRouter responde 402: la tarea queda como *Reintento* y el ítem no se marca.
 
-Instalación, una sola vez, en PowerShell desde la raíz del repositorio. La llave va en una variable **de usuario**, porque es la única que ve la tarea programada; no la escribas en archivos del repo:
+Instalación, una sola vez, en PowerShell desde la raíz del repositorio. La llave va en una variable **de usuario o de sistema** (no de sesión), porque son las que ve la tarea programada. Si existen las dos, gana la de usuario. No la escribas en archivos del repo:
 
 ```powershell
 [Environment]::SetEnvironmentVariable('OPENROUTER_API_KEY', '<tu llave>', 'User')   # luego abre una terminal nueva
