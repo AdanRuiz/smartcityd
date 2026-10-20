@@ -3,6 +3,7 @@ import {
   KIND,
   MAX_FUTURE_SECONDS,
   NOSTR_KIND,
+  SECONDS_PER_DAY,
   checkValues,
   formatAddress,
   isCityId,
@@ -19,7 +20,15 @@ import {
   type Role,
   type SourceContent,
 } from '@smartcity/schemas'
-import { IPFS_GATEWAYS, announcedFiles, daysOf, readArchive, type ArchiveDeps, type ArchiveQuery } from './archive.js'
+import {
+  IPFS_GATEWAYS,
+  announcedFiles,
+  daysOf,
+  readArchive,
+  type ArchiveDeps,
+  type ArchiveDiscard,
+  type ArchiveQuery,
+} from './archive.js'
 import { wins, isWellFormed, type EventTemplate, type NostrEvent, type UnsignedEvent } from './event.js'
 import { matchesAny } from './filter.js'
 import { MAX_CELLS, coverBBox, geoTags, inBBox, roundCoord, type BBox, type LatLon } from './geohash.js'
@@ -161,6 +170,17 @@ export interface ObservationQuery {
   limit?: number
   /** Only these levels. Default: all. */
   trust?: TrustLevel | TrustLevel[]
+}
+
+/** Readings of whole UTC days, from the relays and from the snapshots (`observations.history`). */
+export interface HistoryQuery extends Omit<ObservationQuery, 'since' | 'until' | 'limit'> {
+  /** First UTC day, `YYYY-MM-DD`. */
+  from: string
+  /** Last UTC day, included. Default: `from`. */
+  to?: string
+  /** As in `archive.read`. */
+  archivers?: string[]
+  onDiscard?: (discard: ArchiveDiscard) => void
 }
 
 export type ReportStatus = NonNullable<ReportUpdateContent['status']>
@@ -818,6 +838,31 @@ export class Client {
     query: async (q: ObservationQuery): Promise<Reading[]> => {
       const events = await this.query(this.observationFilters(q))
       return events.flatMap((e) => this.readings(e, q)).sort((a, b) => a.ts - b.ts)
+    },
+
+    /**
+     * Readings of whole UTC days beyond the relays' retention (docs/spec/06, "Consulta de historial en la app"):
+     * what the relays still keep plus what `archive.read` finds in the snapshots of those days, verified there
+     * (SNAP-6), once per event. Oldest first.
+     */
+    history: async (q: HistoryQuery): Promise<Reading[]> => {
+      const { from, to, archivers, onDiscard, ...rest } = q
+      const days = daysOf({ from, to })
+      const window: ObservationQuery = { ...rest, since: days[0]!, until: days[days.length - 1]! + SECONDS_PER_DAY - 1 }
+      const archived = this.archive.read({
+        from,
+        ...(to ? { to } : {}),
+        kinds: [KIND.OBSERVATION],
+        ...(archivers ? { archivers } : {}),
+        ...(onDiscard ? { onDiscard } : {}),
+      })
+      const live = await this.query(this.observationFilters(window))
+      const byId = new Map(live.map((e) => [e.id, e]))
+      for await (const event of archived) {
+        if (byId.has(event.id) || !tagValues(event.tags, 'c').includes(this.cityId)) continue
+        if (tagValues(event.tags, 'a').includes(q.dataset)) byId.set(event.id, event)
+      }
+      return [...byId.values()].flatMap((e) => this.readings(e, window)).sort((a, b) => a.ts - b.ts)
     },
 
     /** New readings as they arrive (and the stored ones first). Returns the function that closes it. */

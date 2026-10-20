@@ -142,3 +142,21 @@ label.check input { width: auto; }
 .suggestions li { display: flex; flex-direction: column; padding: 0.35rem 0.6rem; cursor: pointer; color: var(--fg); }
 .suggestions li.active { background: var(--bg); }
 .suggestions li small { font-size: 0.75rem; color: var(--muted); }
+
+/* Historical series (docs/spec/06): one series, mean line over a min–max band. */
+.chart { margin: 0; }
+.chart figcaption { font-weight: 600; margin-bottom: 0.25rem; }
+.chart-plot { position: relative; }
+.chart svg { width: 100%; height: auto; display: block; }
+.chart .grid { stroke: var(--border); stroke-width: 1; }
+.chart .axis { fill: var(--muted); font-size: 11px; }
+.chart .band { fill: var(--accent); fill-opacity: 0.18; stroke: none; }
+.chart .mean { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
+.chart .point { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
+.chart .crosshair { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.chart-tip {
+  position: absolute; top: 0; transform: translateX(-50%); pointer-events: none;
+  display: flex; flex-direction: column; gap: 0.1rem; font-size: 0.8rem; white-space: nowrap;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 0.3rem 0.5rem;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.15);
+}
