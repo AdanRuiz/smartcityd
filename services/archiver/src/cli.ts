@@ -8,6 +8,7 @@ import { decrypt } from 'nostr-tools/nip49'
 import { runApp } from './app.js'
 import { runAttest } from './attest.js'
 import { runLate } from './late.js'
+import { runMonthly } from './monthly.js'
 import type { Timestamp } from './ots.js'
 import { runPublish, type PublishDeps } from './publish.js'
 import { runAddendum, runSnapshot } from './snapshot.js'
@@ -19,6 +20,8 @@ const USAGE = [
   'usage: archiver snapshot|addendum --city <city> --day <YYYY-MM-DD> --relay <url> [--relay <url>…] [--out <dir>]',
   '         [--web-seed <base url>…] [--tracker <url>…] [--publish --key <ncryptsec file>]',
   '       archiver late --city <city> --relay <url> [--relay <url>…] [--out <dir>]',
+  '         [--web-seed <base url>…] [--tracker <url>…] [--publish --key <ncryptsec file>]',
+  '       archiver monthly --city <city> --month <YYYY-MM> [--out <dir>] [--relay <url>…]',
   '         [--web-seed <base url>…] [--tracker <url>…] [--publish --key <ncryptsec file>]',
   '       archiver publish <file.snapshot.json>… --relay <url>… --key <ncryptsec file>',
   '       archiver stamp <file.snapshot.signed.json>… [--calendar <url>…]',
@@ -58,7 +61,7 @@ function keyFrom(path: string | undefined): PublishDeps['secretKey'] {
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv
   const perFile = command === 'publish' || command === 'stamp' || command === 'upgrade' || command === 'attest'
-  if (command !== 'snapshot' && command !== 'addendum' && command !== 'late' && command !== 'app' && !perFile) {
+  if (command !== 'snapshot' && command !== 'addendum' && command !== 'late' && command !== 'monthly' && command !== 'app' && !perFile) {
     console.error(USAGE)
     return 2
   }
@@ -68,6 +71,7 @@ async function main(argv: string[]): Promise<number> {
     options: {
       city: { type: 'string' },
       day: { type: 'string' },
+      month: { type: 'string' },
       relay: { type: 'string', multiple: true },
       out: { type: 'string', default: '.' },
       'web-seed': { type: 'string', multiple: true },
@@ -146,6 +150,27 @@ async function main(argv: string[]): Promise<number> {
     if (values.publish) {
       for (const { files } of late.addenda) await runPublish({ event: files.event, relays }, publishDeps())
     }
+    return 0
+  }
+
+  // SNAP-4: the month's dailies and addenda in `--out`, joined into one file once SNAP-9 allows it.
+  if (command === 'monthly') {
+    if (!values.city || !values.month || (values.publish && (!values.key || relays.length === 0))) {
+      console.error(USAGE)
+      return 2
+    }
+    const monthly = await runMonthly(
+      {
+        city: values.city,
+        month: values.month,
+        relays,
+        out: values.out,
+        webSeeds: values['web-seed'] ?? [],
+        trackers: values.tracker,
+      },
+      { fetch: (url, init) => fetch(url, init), now: Math.floor(Date.now() / 1000), log },
+    )
+    if (values.publish) await runPublish({ event: monthly.files.event, relays }, publishDeps())
     return 0
   }
 

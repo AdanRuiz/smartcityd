@@ -2,7 +2,7 @@
 
 CLI de snapshots. Especificación: [`docs/spec/06-distribucion-y-persistencia.md`](../../docs/spec/06-distribucion-y-persistencia.md).
 
-Estado (fase 4): arma el archivo diario, sus adendas y el evento `snapshot` sin firmar de cada uno (SNAP-1, SNAP-2, SNAP-3, SNAP-5), con las adendas de los eventos tardíos que cada relay recibió desde la última corrida, sin volver a pedir días archivados (`archiver late`, SNAP-8), el `.torrent` de cada archivo con sus web seeds y su CID de IPFS, con `cid`, `magnet` y `urls` ya en el evento (DIST-1 a DIST-3), firma y publica ese evento con la llave del archivista (DIST-2) sella su `id` en los calendarios de OpenTimestamps, completa la prueba cuando confirma la transacción y la publica como kind 1040 (NIP-03) en los relays ("Sello de tiempo"); con `--verify` comprueba la prueba contra los encabezados de bloque de Bitcoin (SNAP-7). También calcula el CID de IPFS y el torrent de un build de la app para su evento `release` (`archiver app`, DIST-1, DIST-3). Pendientes según `09-roadmap.md`: subir el archivo a los web seeds y fijarlo en IPFS.
+Estado (fase 4): arma el archivo diario, sus adendas y el evento `snapshot` sin firmar de cada uno (SNAP-1, SNAP-2, SNAP-3, SNAP-5), con las adendas de los eventos tardíos que cada relay recibió desde la última corrida, sin volver a pedir días archivados (`archiver late`, SNAP-8), el consolidado mensual que une los diarios y adendas de un mes cuando ya no pueden recibir adendas (`archiver monthly`, SNAP-4, SNAP-9), el `.torrent` de cada archivo con sus web seeds y su CID de IPFS, con `cid`, `magnet` y `urls` ya en el evento (DIST-1 a DIST-3), firma y publica ese evento con la llave del archivista (DIST-2) sella su `id` en los calendarios de OpenTimestamps, completa la prueba cuando confirma la transacción y la publica como kind 1040 (NIP-03) en los relays ("Sello de tiempo"); con `--verify` comprueba la prueba contra los encabezados de bloque de Bitcoin (SNAP-7). También calcula el CID de IPFS y el torrent de un build de la app para su evento `release` (`archiver app`, DIST-1, DIST-3). Pendientes según `09-roadmap.md`: subir el archivo a los web seeds y fijarlo en IPFS.
 
 Corre en la máquina del archivista o en CI, no en un Worker. Depende solo de `@smartcity/schemas`, `nostr-tools` y Node. Agregar una dependencia externa cambia `pnpm-lock.yaml`, y eso lo hace una persona, no el agente (`docs/operacion/agente.md`).
 
@@ -64,6 +64,22 @@ Halla los eventos tardíos sin volver a pedir días ya archivados (SNAP-8):
 - Un relay que no tiene la ruta (responde 400, 404, 405 o 501, como el relay de referencia mientras no se vuelva a desplegar) se lee con la alternativa de SNAP-8: toma el máximo de antigüedad que declara en su documento NIP-11 (`limitation.created_at_lower_limit`, RELAY-5) y pide con `GET /v1/events?c=&since=` todo lo de la ciudad creado en esa ventana, paginando hacia atrás con `until`. Como no tiene cursor, no se guarda ninguno para él y en cada corrida vuelve a leer la ventana entera; los archivos publicados evitan repetir eventos. Un relay sin máximo declarado no tiene ventana acotada y se reporta como fallido (para él, `archiver addendum --day`).
 - Un relay que falla se reporta y conserva su cursor; si ninguno responde no escribe nada.
 - Con `--publish --key` firma y publica cada adenda escrita, como `snapshot` y `addendum`. Se puede correr en un cron diario.
+
+## `archiver monthly`
+
+```sh
+node dist/cli.js monthly --city mx-gdl --month 2026-10 --out snapshots/ \
+  --relay wss://relay-a.example --relay wss://relay-b.example \
+  --web-seed https://github.com/<org>/<repo>/releases/download/sc-mx-gdl-2026-10
+```
+
+El consolidado mensual (SNAP-4): une los diarios y las adendas de un mes que ya están en `--out` en un solo archivo y un solo torrent, para que se siembre uno por mes en vez de uno por día.
+
+- Rechaza un mes cuyo último día aún puede recibir adendas: se genera cuando ese día cumple 30 días, el máximo de antigüedad por defecto de los relays (SNAP-9, RELAY-5). Conviene correr `archiver late` una última vez antes.
+- Rechaza un mes al que le falte el diario de algún día, y se detiene si un archivo no coincide con el `x` y el `file.x` de su `.snapshot.json`. Vuelve a verificar `id` y `sig` de cada evento (SNAP-6).
+- Omite lo que borra un kind 5 de su autor: los ya archivados en el mes y, con `--relay`, los que conocen los relays desde el inicio del mes (SNAP-3). Sin `--relay` no usa la red.
+- Escribe `sc_<city>_<YYYY-MM>.ndjson.gz`, su `.torrent` y `sc_<city>_<YYYY-MM>.snapshot.json`: tag `["t", "monthly"]`, `from` el inicio del mes y `to` el del siguiente, para que el relay compare su `count` con lo que guarda del mes (RELAY-4), y `cid`, `magnet` y `urls` como un diario (DIST-1 a DIST-3). `relays` une los de los archivos del mes y los leídos. Nunca sobrescribe un archivo que ya existe.
+- Con `--publish --key` lo firma y publica en los `--relay`, como `snapshot`; después se sella con `stamp`, `upgrade` y `attest`, como cualquier `snapshot`.
 
 ## `archiver publish`
 
