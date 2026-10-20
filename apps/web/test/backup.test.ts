@@ -5,7 +5,12 @@ import { PLACE_KEY, type CurrentPlace } from '../src/geo/store'
 import { KEY_ITEM } from '../src/identity'
 import { SETTINGS_KEY, type Settings } from '../src/settings'
 
-const settings: Settings = { city: 'mx-monterrey', relays: ['wss://relay.example'], anchors: { 'mx-gdl': ['a'.repeat(64)] } }
+const settings: Settings = {
+  city: 'mx-monterrey',
+  relays: ['wss://relay.example'],
+  anchors: { 'mx-gdl': ['a'.repeat(64)] },
+  developers: ['d'.repeat(64)],
+}
 const chosen: CurrentPlace = { place: { name: 'Monterrey', countryCode: 'MX', lat: 25.67, lon: -100.31, bbox: [25.5, -100.5, 25.8, -100.1] }, source: 'manual' }
 const key = () => encryptSecretKey(generateSecretKey(), 'una frase larga')
 

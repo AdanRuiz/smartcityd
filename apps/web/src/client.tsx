@@ -13,12 +13,13 @@ import {
 } from '@smartcity/sdk'
 import PowWorker from '@smartcity/sdk/pow-worker?worker&inline'
 import VerifyWorker from '@smartcity/sdk/verify-worker?worker&inline'
-import { createContext, Fragment, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, Fragment, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { cityForPlace } from './cities'
 import { CITIES, type CityConfig } from './config'
 import { usePlace } from './geo/store'
 import type { IdentityKind } from './identity'
 import { loadSettings, saveSettings, type Settings } from './settings'
+import { checkUpdates, type ReleaseOffer } from './updates'
 
 export interface Identity {
   kind: IdentityKind
@@ -35,6 +36,11 @@ interface AppState {
   anchors: string[]
   /** Changes whenever trust levels may have changed (TRUST-7): components recompute with it. */
   trustVersion: number
+  /** APP-8: versions newer than this build announced by the developer keys in use. Empty while there are none. */
+  updates: ReleaseOffer[]
+  updatesState: 'idle' | 'checking' | 'done' | 'error'
+  /** APP-8: asks the relays again for the `release` of each channel. */
+  refreshUpdates(): void
   updateSettings(change: Partial<Settings>): void
   setAnchors(anchors: string[] | null): Promise<void>
   setIdentity(signer: Signer | null, kind?: IdentityKind): Promise<void>
@@ -77,6 +83,10 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   const [city, setCity] = useState<City | null>(null)
   const [identity, setIdentityState] = useState<Identity | null>(null)
   const [trustVersion, setTrustVersion] = useState(0)
+  const [updates, setUpdates] = useState<ReleaseOffer[]>([])
+  const [updatesState, setUpdatesState] = useState<'idle' | 'checking' | 'done' | 'error'>('idle')
+  const updateRun = useRef(0)
+  const developers = settings.developers
 
   // One client per city of the data (its own local store, APP-11); the previous one closes once the new one is up.
   useEffect(() => {
@@ -118,6 +128,29 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     }
   }, [sc])
 
+  // APP-8: once per client and whenever the developer keys change, ask for the `release` of each channel. It only
+  // reads and shows; it never downloads or runs anything (APP-9).
+  const refreshUpdates = useCallback(() => {
+    const run = ++updateRun.current
+    setUpdates([])
+    if (!sc || developers.length === 0) {
+      setUpdatesState('done')
+      return
+    }
+    setUpdatesState('checking')
+    checkUpdates((filters) => sc.query(filters), { developers, current: __APP_VERSION__ }).then(
+      (found) => {
+        if (run !== updateRun.current) return
+        setUpdates(found)
+        setUpdatesState('done')
+      },
+      () => {
+        if (run === updateRun.current) setUpdatesState('error')
+      },
+    )
+  }, [sc, developers])
+  useEffect(() => refreshUpdates(), [refreshUpdates])
+
   if (!active) return <div className="page muted">Abriendo almacenamiento local…</div>
   const { cityConfig } = active
 
@@ -157,7 +190,21 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   const anchors = anchorsOf(settings, cityConfig)
   return (
     <Context.Provider
-      value={{ sc: active.sc, settings, cityConfig, city, identity, anchors, trustVersion, updateSettings, setAnchors, setIdentity }}
+      value={{
+        sc: active.sc,
+        settings,
+        cityConfig,
+        city,
+        identity,
+        anchors,
+        trustVersion,
+        updates,
+        updatesState,
+        refreshUpdates,
+        updateSettings,
+        setAnchors,
+        setIdentity,
+      }}
     >
       {/* A new city of the data starts every page afresh. */}
       <Fragment key={cityConfig.id}>{children}</Fragment>

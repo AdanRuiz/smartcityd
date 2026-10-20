@@ -123,6 +123,8 @@ label.check input { width: auto; }
 .history li.official { border-left-color: #1d4ed8; }
 .notice { background: var(--warn-bg); border-radius: 6px; padding: 0.5rem 0.6rem; margin: 0; }
 .notice p { margin: 0 0 0.4rem; }
+/* APP-8: notice of a newer version, above the page. */
+.update { margin: 0.5rem 1rem 0; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.5rem; }
 .pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
 .map.placing canvas { cursor: crosshair; }
 
