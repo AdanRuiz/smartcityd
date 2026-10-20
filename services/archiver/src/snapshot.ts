@@ -104,7 +104,7 @@ async function readRelays(options: SnapshotOptions, since: number, deps: Snapsho
  * DIST-1 to DIST-3: the IPFS `cid`, the torrent of the file with its web seeds, and the `magnet` and `urls` of the
  * event. They go into the content before signing, so the signed event already says where to download the file.
  */
-function distribute(snapshot: DailySnapshot, options: SnapshotOptions) {
+function distribute(snapshot: DailySnapshot, options: WriteOptions) {
   const urls = (options.webSeeds ?? []).map((base) => seedUrl(base, snapshot.name))
   const torrent = createTorrent(snapshot.gzip, { name: snapshot.name, trackers: options.trackers, webSeeds: urls })
   const cid = fileCid(snapshot.gzip)
@@ -116,7 +116,9 @@ function distribute(snapshot: DailySnapshot, options: SnapshotOptions) {
   return torrent
 }
 
-export async function write(files: Files, snapshot: DailySnapshot, options: SnapshotOptions, log: (line: string) => void) {
+export type WriteOptions = Pick<SnapshotOptions, 'out' | 'webSeeds' | 'trackers'>
+
+export async function write(files: Files, snapshot: DailySnapshot, options: WriteOptions, log: (line: string) => void) {
   const torrent = distribute(snapshot, options)
   await mkdir(options.out, { recursive: true })
   await writeFile(files.archive, snapshot.gzip, { flag: 'wx' })

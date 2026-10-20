@@ -175,7 +175,7 @@ export async function runLate(options: LateOptions, deps: SnapshotDeps): Promise
       deps.log(`${day}: nothing new since the published files (${snapshot.archived} already archived)`)
       continue
     }
-    await write(files, snapshot, { ...options, day }, deps.log)
+    await write(files, snapshot, options, deps.log)
     addenda.push({ day, snapshot, files })
   }
 

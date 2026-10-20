@@ -104,7 +104,7 @@ function belongsTo(event: SignedEvent, city: string): boolean {
   return owner === city || owner === ANY_CITY
 }
 
-/** Why an event cannot go into the day's file, or null if it can. */
+/** Why an event cannot go into the file of `range`, or null if it can. */
 function rejection(event: unknown, city: string, range: { from: number; to: number }): string | null {
   if (!isEventShape(event)) return 'not a NIP-01 event'
   if (!verifies(event)) return 'invalid id or signature'
@@ -112,7 +112,7 @@ function rejection(event: unknown, city: string, range: { from: number; to: numb
   const cls = kindClass(event.kind)
   if (cls !== 'regular' && cls !== 'addressable') return `${cls} events are not archived`
   if (!belongsTo(event, city)) return `not from city ${city}`
-  if (event.created_at < range.from || event.created_at >= range.to) return 'created_at outside the day'
+  if (event.created_at < range.from || event.created_at >= range.to) return 'created_at outside the range'
   // SNAP-16 (ADR-21): an author who sets a NIP-40 expiration marks the event as temporary, and a snapshot is
   // permanent, so it is left out whatever the date. Also keeps the file independent of when it is generated.
   if (expirationOf(event) !== null) return 'has NIP-40 expiration (SNAP-16)'
@@ -160,7 +160,7 @@ export function deletionIndex(deletions: readonly unknown[]): (event: SignedEven
  * the grace period (SNAP-1).
  */
 export function buildDaily(input: DailyInput): DailySnapshot {
-  return build(input, 'daily', `sc_${input.city}_${input.day}.ndjson.gz`, new Set())
+  return build(input, dayRange(input), 'daily', `sc_${input.city}_${input.day}.ndjson.gz`, new Set())
 }
 
 /**
@@ -170,16 +170,31 @@ export function buildDaily(input: DailyInput): DailySnapshot {
  */
 export function buildAddendum(input: AddendumInput): DailySnapshot {
   if (!Number.isSafeInteger(input.n) || input.n < 1) throw new Error(`addendum number must be 1 or more: ${input.n}`)
-  return build(input, 'addendum', `sc_${input.city}_${input.day}_a${input.n}.ndjson.gz`, input.archived)
+  const name = `sc_${input.city}_${input.day}_a${input.n}.ndjson.gz`
+  return build(input, dayRange(input), 'addendum', name, input.archived)
 }
 
-function build(input: DailyInput, type: 'daily' | 'addendum', name: string, archived: ReadonlySet<string>): DailySnapshot {
+/** The day's range, once it is out of the grace period (SNAP-1). */
+function dayRange(input: DailyInput): { from: number; to: number } {
   const range = utcDayRange(input.day)
   if (!range) throw new Error(`day must be a UTC date YYYY-MM-DD: ${input.day}`)
   if (input.now < range.to + GRACE_SECONDS) {
     throw new Error(`${input.day} is still in the 48 h grace period (SNAP-1)`)
   }
+  return range
+}
 
+/**
+ * The file of `range` and its `snapshot` event: verifies each event, leaves out what is not of the city or the
+ * range, what its author deleted (SNAP-3) and what a published file already has (SNAP-2), and computes `x`.
+ */
+export function build(
+  input: Pick<DailyInput, 'city' | 'events' | 'deletions' | 'relays' | 'now'>,
+  range: { from: number; to: number },
+  type: 'daily' | 'addendum' | 'monthly',
+  name: string,
+  archived: ReadonlySet<string>,
+): DailySnapshot {
   const isDeleted = deletionIndex(input.deletions)
   const discarded: DailySnapshot['discarded'] = []
   const reported = new Set<string>()
