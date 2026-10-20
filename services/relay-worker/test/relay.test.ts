@@ -2,7 +2,7 @@ import { KIND } from '@smartcity/schemas'
 import { describe, expect, it } from 'vitest'
 import { isNew } from '../src/accept.js'
 import { filterFromQuery, matchFilter, parseFilter, type Filter } from '../src/filter.js'
-import { CITY, NOW, airDataset, dataset, deletion, key, live, observation, relay, report, roles, sign } from './helpers.js'
+import { CITY, NOW, airDataset, dataset, deletion, key, live, observation, relay, report, reportBelow, roles, sign } from './helpers.js'
 
 const message = (r: { message: string }) => r.message
 
@@ -262,7 +262,7 @@ describe('proof of work and roles (step 8, step 9, SPAM-1, docs/spec/04)', () =>
   it('asks reports from keys without a role for the configured bits', async () => {
     const r = relay({ POW_BITS_REPORT: '8' })
     const { sk } = key()
-    expect(message(await r.publish(report(sk)))).toBe('pow: difficulty 8 required')
+    expect(message(await r.publish(reportBelow(sk, 8)))).toBe('pow: difficulty 8 required')
     expect((await r.publish(report(sk, 8))).ok).toBe(true)
     // Other kinds need no work.
     expect((await r.publish(observation(sk, key().pk))).ok).toBe(true)
@@ -270,7 +270,7 @@ describe('proof of work and roles (step 8, step 9, SPAM-1, docs/spec/04)', () =>
 
   it('asks 16 bits by default and none when disabled', async () => {
     const { sk } = key()
-    expect(message(await relay().publish(report(sk)))).toBe('pow: difficulty 16 required')
+    expect(message(await relay().publish(reportBelow(sk, 16)))).toBe('pow: difficulty 16 required')
     expect((await relay({ POW_BITS_REPORT: '0' }).publish(report(sk))).ok).toBe(true)
   })
 
@@ -282,7 +282,7 @@ describe('proof of work and roles (step 8, step 9, SPAM-1, docs/spec/04)', () =>
     expect((await r.publish(roles(anchor.sk, [[official.pk, 'operator'], [banned.pk, 'blocked']]))).ok).toBe(true)
     expect((await r.publish(report(official.sk))).ok).toBe(true)
     expect((await r.publish(report(anchor.sk, 0, NOW + 1))).ok).toBe(true)
-    expect(message(await r.publish(report(banned.sk)))).toBe('pow: difficulty 8 required')
+    expect(message(await r.publish(reportBelow(banned.sk, 8)))).toBe('pow: difficulty 8 required')
   })
 
   it('ignores roles lists from keys that are not anchors (TRUST-4)', async () => {
@@ -291,7 +291,7 @@ describe('proof of work and roles (step 8, step 9, SPAM-1, docs/spec/04)', () =>
     const friend = key()
     const r = relay({ TRUST_ANCHORS: anchor.pk, POW_BITS_REPORT: '8' })
     expect((await r.publish(roles(impostor.sk, [[friend.pk, 'authority']]))).ok).toBe(true)
-    expect(message(await r.publish(report(friend.sk)))).toBe('pow: difficulty 8 required')
+    expect(message(await r.publish(reportBelow(friend.sk, 8)))).toBe('pow: difficulty 8 required')
   })
 
   it('with WRITE_POLICY=roles takes only anchors and keys with a role', async () => {

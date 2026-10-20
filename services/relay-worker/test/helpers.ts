@@ -114,6 +114,20 @@ export function report(sk: Uint8Array, bits = 0, createdAt = NOW) {
   }
 }
 
+/**
+ * A report without proof of work whose id has fewer than `bits` leading zero bits. A random id
+ * reaches 8 bits once in 256 tries, so `report(sk)` alone made the PoW rejection tests flaky.
+ */
+export function reportBelow(sk: Uint8Array, bits: number, createdAt = NOW) {
+  const pubkey = getPublicKey(sk)
+  const tags = [['c', CITY], ['t', 'bache'], ...G]
+  const content = JSON.stringify({ v: 1, title: 'Bache', loc: [20.6668, -103.3918] })
+  for (let n = 0; ; n++) {
+    const candidate = { kind: KIND.REPORT, tags, content, created_at: createdAt - n, pubkey }
+    if (getPow(getEventHash(candidate)) < bits) return finalizeEvent(candidate, sk) as NostrEvent
+  }
+}
+
 export function roles(sk: Uint8Array, entries: [string, string][], createdAt = NOW) {
   return sign(sk, KIND.ROLES, [['d', CITY], ['c', CITY], ...entries.map(([pk, role]) => ['p', pk, role])], { v: 1 }, createdAt)
 }
