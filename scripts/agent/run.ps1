@@ -32,7 +32,7 @@ param(
   [int]$TaskTimeoutMinutes = 45,
   # Pinned so a CLI update cannot silently change the model behind the PRs.
   # Empty means the engine default: claude-opus-5-5, gemini-3.8-flash-high (see `agy models`)
-  # or deepseek/deepseek-v4.1-flash (an OpenRouter model id; never a ~...-latest alias).
+  # or deepseek/deepseek-v4.1-flash-1017 (an OpenRouter model id; never a ~...-latest alias).
   [string]$Model = '',
   [Alias('SkipRoadmap')]
   [switch]$SkipBacklog,
@@ -55,7 +55,7 @@ $IsOpenRouter = $Engine -eq 'openrouter'
 $Lane = if ($IsGemini -or $IsOpenRouter) { 'gemini' } else { 'claude' }
 $InGeminiLane = $Lane -eq 'gemini'
 if (-not $Model) {
-  $Model = if ($IsGemini) { 'gemini-3.8-flash-high' } elseif ($IsOpenRouter) { 'deepseek/deepseek-v4.1-flash' } else { 'claude-opus-5-5' }
+  $Model = if ($IsGemini) { 'gemini-3.8-flash-high' } elseif ($IsOpenRouter) { 'deepseek/deepseek-v4.1-flash-1017' } else { 'claude-opus-5-5' }
 }
 $StateDir = Join-Path $env:LOCALAPPDATA $(if ($Engine -eq 'claude') { 'smartcity-agent' } else { "smartcity-agent-$Engine" })
 $Clone = Join-Path $StateDir 'repo'
