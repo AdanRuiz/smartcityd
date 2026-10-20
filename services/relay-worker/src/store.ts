@@ -60,6 +60,21 @@ function indexedTags(event: NostrEvent): [string, string][] {
   return [...pairs.values()]
 }
 
+/**
+ * The database has no room for a new event (RELAY-4): the batch was rolled back and nothing was deleted to make
+ * room. D1 reports it as "Exceeded maximum DB size"; SQLite, as SQLITE_FULL ("database or disk is full").
+ */
+export class StorageFullError extends Error {
+  constructor(cause: unknown) {
+    super('storage full', { cause })
+    this.name = 'StorageFullError'
+  }
+}
+
+function isStorageFull(error: unknown): boolean {
+  return /SQLITE_FULL|database or disk is full|maximum DB size/i.test(String(error))
+}
+
 function rowsWritten(results: DbResult[]): number {
   return results.reduce((sum, r) => sum + (r.meta?.rows_written ?? 0), 0)
 }
@@ -119,6 +134,7 @@ export class Store {
     } catch (error) {
       // Same id or same address stored by a concurrent request between the check and the batch.
       if (String(error).includes('UNIQUE')) return { status: 'duplicate', rowsWritten: 0 }
+      if (isStorageFull(error)) throw new StorageFullError(error)
       throw error
     }
   }

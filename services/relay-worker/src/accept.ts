@@ -5,7 +5,7 @@ import { IP_RATE_FACTOR, type Config } from './config.js'
 import { checkStructure, eventCity, type NostrEvent } from './event.js'
 import type { RateLimiter } from './ratelimit.js'
 import { roleBookFor, type RoleBook } from './roles.js'
-import type { SaveStatus, Store } from './store.js'
+import { StorageFullError, type SaveResult, type SaveStatus, type Store } from './store.js'
 
 export interface AcceptDeps {
   store: Store
@@ -112,7 +112,14 @@ export async function acceptEvent(raw: unknown, ip: string, deps: AcceptDeps): P
     return reject('restricted: this relay only accepts keys with a role')
   }
 
-  const saved = await store.save(event, now)
+  // RELAY-4, ADR-20: when the database is full, new writes are refused; nothing unarchived is deleted for room.
+  let saved: SaveResult
+  try {
+    saved = await store.save(event, now)
+  } catch (error) {
+    if (error instanceof StorageFullError) return reject('restricted: storage full')
+    throw error
+  }
   if (saved.status === 'stored' || saved.status === 'replaced') roles.saw(event)
   const duplicate = saved.status === 'stale' || saved.status === 'duplicate'
   const message =

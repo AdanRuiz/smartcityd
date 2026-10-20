@@ -26,7 +26,7 @@ Mientras no cambie `scripts/agent/`, el agente sigue eligiendo su tarea desde `0
 
 | ID | Ítem | MoSCoW | Fase | Quién | Estado | Requisitos | Aceptación y notas |
 |---|---|---|---|---|---|---|---|
-| PB-1 | Relay: rechazar escrituras con `restricted: storage full` cuando el almacenamiento se llena y no hay días archivados que purgar | Must | 4 | agente | pendiente | RELAY-4, ADR-20 | Test: con la base llena y sin anclas, un `EVENT` recibe `OK false` con ese prefijo y no se borra nada sin archivar |
+| PB-1 | Relay: rechazar escrituras con `restricted: storage full` cuando el almacenamiento se llena y no hay días archivados que purgar | Must | 4 | agente | hecho · este PR | RELAY-4, ADR-20 | Test: con la base llena y sin anclas, un `EVENT` recibe `OK false` con ese prefijo y no se borra nada sin archivar |
 | PB-2 | Relay: exportación por día (`GET /v1/export?c=&day=`) | Must | 4 | agente | hecho · #1 | RELAY-4, NFR-4 | |
 | PB-3 | Relay: retención condicionada a snapshots archivados | Must | 4 | agente | hecho · #3, #6 | RELAY-4, GOAL-2 | |
 | PB-4 | Relay: importación de snapshots | Must | 4 | agente | hecho · #5 | NFR-4, SNAP-6 | |
