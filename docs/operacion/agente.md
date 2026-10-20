@@ -29,7 +29,7 @@ Corre 3 minutos después de iniciar sesión y luego cada hora mientras la sesió
 | Se debilita sus propias reglas o las del CI | Un PR que toca `.github/`, `scripts/agent/`, `LICENSE`, `pnpm-lock.yaml` o archivos `.env`/`.dev.vars` no se abre. |
 | Mete dependencias (cadena de suministro) | `pnpm add/up/dlx`, `npx`, `curl` y `wget` están denegados, y el lockfile está protegido. |
 | Un issue intenta manipularlo (inyección de prompt) | Solo se toman issues con la etiqueta `agent`, que en GitHub solo pueden poner colaboradores con permiso de triage. El prompt trata el texto del issue como datos. |
-| Cobra a la API en vez de usar la suscripción | `ANTHROPIC_API_KEY` y `ANTHROPIC_AUTH_TOKEN` se borran del entorno antes de lanzar `claude`. |
+| Cobra a la API en vez de usar la suscripción | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` y `ANTHROPIC_BASE_URL` se borran del entorno antes de lanzar `claude`. La única excepción buscada es el motor `openrouter` (ver abajo), que cobra por token a la llave de OpenRouter y nunca a la suscripción. |
 | Se acaba la cuota de uso | Máximo 3 bugs y 1 ítem del backlog por corrida, un solo PR del backlog abierto a la vez y 45 minutos por tarea. Un ítem bloqueado no se reintenta hasta que una persona le quita `agent:bloqueado`. La bitácora registra turnos y minutos de cada sesión. |
 | Una actualización de Claude Code cambia el modelo sin avisar | El modelo está fijado (`run.ps1 -Model`, hoy `claude-opus-5-5`). El modelo realmente usado y la versión de la CLI quedan en cada PR y en cada comentario de la bitácora. |
 | El agente se degrada y sigue gastando cuota | Freno automático: ver "Métricas". |
@@ -89,6 +89,25 @@ powershell -ExecutionPolicy Bypass -File scripts\agent\run.ps1 -Engine gemini -D
 ```
 
 La tarea corre 8 minutos después de iniciar sesión y luego cada hora. Si la sesión de Google vence, la bitácora muestra "agy no tiene sesion de Google": abre `agy` e inicia sesión. Para quitarlo, con sus reglas: `install.ps1 -Engine gemini -Uninstall`.
+
+## Agente por OpenRouter (suplente de Gemini)
+
+Un tercer motor, `run.ps1 -Engine openrouter`, corre Claude Code apuntado a [OpenRouter](https://openrouter.ai/docs/guides/guides/claude-code-integration) con un modelo barato. Sirve para seguir avanzando los ítems de Gemini cuando `agy` se queda sin cuota. **Es el único motor que cuesta dinero:** cobra por token a la llave de OpenRouter del mantenedor.
+
+- **Mismo carril que Gemini:** toma los issues con `gemini`, usa ramas `agent/gemini-<n>` y el mismo candado (mutex) que el agente Gemini. Los dos pueden estar instalados a la vez: nunca corren al mismo tiempo, el PR abierto de uno detiene al otro y ninguno toma un ítem que ya tiene rama. Tampoco toma bugs.
+- **Modelo fijado:** `deepseek/deepseek-v4.1-flash` (en octubre de 2026, US$0.04 por millón de tokens de entrada y US$0.12 de salida). Para cambiarlo, `-Model <id de OpenRouter>`, nunca un alias `~…-latest`. Todos los roles de Claude Code (principal, subagentes y tareas de fondo) van a ese modelo. OpenRouter solo garantiza Claude Code con modelos de Anthropic; si DeepSeek falla con las herramientas, la alternativa barata y compatible es `anthropic/claude-haiku-5.5`.
+- **Aislado de la suscripción:** usa su propia carpeta de configuración de Claude Code (`CLAUDE_CONFIG_DIR` en `%LOCALAPPDATA%\smartcity-agent-openrouter\claude-config`), así que nunca ve la sesión del mantenedor. Clon y logs, en la misma carpeta.
+- **Costo:** la columna *USD eq. API* queda vacía para este motor, porque Claude Code calcula con tarifas de Anthropic. El gasto real está en el panel de OpenRouter. **Pon un límite de crédito a la llave en openrouter.ai.** Sin crédito, OpenRouter responde 402: la tarea queda como *Reintento* y el ítem no se marca.
+
+Instalación, una sola vez, en PowerShell desde la raíz del repositorio. La llave va en una variable **de usuario**, porque es la única que ve la tarea programada; no la escribas en archivos del repo:
+
+```powershell
+[Environment]::SetEnvironmentVariable('OPENROUTER_API_KEY', '<tu llave>', 'User')   # luego abre una terminal nueva
+powershell -ExecutionPolicy Bypass -File scripts\agent\run.ps1 -Engine openrouter -DryRun   # simulacro
+powershell -ExecutionPolicy Bypass -File scripts\agent\install.ps1 -Engine openrouter       # tarea smartcity-agent-openrouter
+```
+
+La tarea corre 13 minutos después de iniciar sesión y luego cada hora. Para quitarla: `install.ps1 -Engine openrouter -Uninstall`. Mientras Gemini no tenga cuota, conviene deshabilitar su tarea (`Disable-ScheduledTask -TaskName smartcity-agent-gemini`) para no gastar corridas en reintentos.
 
 ## Límites conocidos
 

@@ -9,17 +9,21 @@
   smartcity-agent-gemini, 5 minutes later by default, and adds the agent's
   allow and deny rules to agy's settings.json (a backup is kept next to it).
   -Uninstall removes the task and, for gemini, those rules.
+  With -Engine openrouter it registers smartcity-agent-openrouter (Claude Code
+  through OpenRouter with the user's OPENROUTER_API_KEY), 13 minutes later by
+  default; it works Gemini's items and never runs at the same time as Gemini.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\agent\install.ps1
   powershell -ExecutionPolicy Bypass -File scripts\agent\install.ps1 -Uninstall
   powershell -ExecutionPolicy Bypass -File scripts\agent\install.ps1 -Engine gemini
+  powershell -ExecutionPolicy Bypass -File scripts\agent\install.ps1 -Engine openrouter
 #>
 param(
-  [ValidateSet('claude', 'gemini')]
+  [ValidateSet('claude', 'gemini', 'openrouter')]
   [string]$Engine = 'claude',
   [switch]$Uninstall,
-  # Default: 3 for Claude, 8 for Gemini, so both do not clone and install at the same moment.
+  # Default: 3 for Claude, 8 for Gemini, 13 for OpenRouter, so they do not clone and install at the same moment.
   [int]$DelayMinutes = -1,
   [int]$EveryMinutes = 60
 )
@@ -27,8 +31,8 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'common.ps1')
-$TaskName = if ($Engine -eq 'gemini') { 'smartcity-agent-gemini' } else { 'smartcity-agent' }
-if ($DelayMinutes -lt 0) { $DelayMinutes = if ($Engine -eq 'gemini') { 8 } else { 3 } }
+$TaskName = if ($Engine -eq 'claude') { 'smartcity-agent' } else { "smartcity-agent-$Engine" }
+if ($DelayMinutes -lt 0) { $DelayMinutes = @{ claude = 3; gemini = 8; openrouter = 13 }[$Engine] }
 
 # Adds (or with -Remove takes out) the agent's rules in agy's settings.json, keeping a backup.
 function Update-AgyRules([switch]$Remove) {
@@ -59,6 +63,10 @@ if ($Uninstall) {
 if ($Engine -eq 'gemini') {
   Update-AgyRules
   Assert-AgySettings
+}
+# The scheduled task only sees the key if it is a user (not session) variable.
+if ($Engine -eq 'openrouter' -and -not [Environment]::GetEnvironmentVariable('OPENROUTER_API_KEY', 'User')) {
+  throw 'Define OPENROUTER_API_KEY as a user variable first. See docs/operacion/agente.md.'
 }
 
 $script = Join-Path $PSScriptRoot 'run.ps1'
