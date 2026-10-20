@@ -81,7 +81,7 @@ $prs = @((Get-GhJson { gh pr list --repo $Repo --state all --limit 300 --json nu
     $body = [string](Get-Prop $_ 'body')
     [pscustomobject]@{
       number = $_.number
-      # agent/backlog-* and the older agent/roadmap-* PRs both advance the backlog.
+      # agent/backlog-* (Claude), agent/gemini-* (Gemini) and the older agent/roadmap-* PRs advance the backlog.
       kind = if ($_.headRefName -like 'agent/issue-*') { 'issue' } else { 'backlog' }
       prompt = Get-Tag $body 'prompts'
       model = Get-Tag $body 'modelo'
@@ -198,7 +198,7 @@ if ($sprint.Count -eq 0) {
   foreach ($g in $groups) {
     if ($g.items.Count -eq 0) { continue }
     $sprintOut += '', "**$($g.title):**"
-    $sprintOut += @($g.items | Sort-Object number | ForEach-Object { "- #$($_.number) $($_.title)" })
+    $sprintOut += @($g.items | Sort-Object number | ForEach-Object { "- #$($_.number) $($_.title)$(if (& $hasLabel $_ 'gemini') { ' (Gemini)' })" })
   }
 }
 

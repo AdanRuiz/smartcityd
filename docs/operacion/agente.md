@@ -67,6 +67,31 @@ Al registrarla, la primera corrida es 3 minutos después y de ahí cada hora, si
 - **Logs locales:** `%LOCALAPPDATA%\smartcity-agent\logs` (se borran a los 30 días). `<fecha>.log` es la corrida y `<fecha>-<tarea>-claude.json`, la respuesta del modelo para cada tarea.
 - **Ajustes:** `run.ps1 -MaxIssues 1`, `-SkipBacklog` (antes `-SkipRoadmap`, que sigue funcionando), `-SprintSize 5`, `-TaskTimeoutMinutes 20` y `-Model <id>`. Para cambiarlos en la tarea programada, edita sus argumentos en `install.ps1`.
 
+## Agente Gemini (en paralelo)
+
+Un segundo agente, igual al de Claude pero con Gemini CLI, trabaja al mismo tiempo en otros ítems del backlog. Usa la cuenta de Google del mantenedor, **nunca una API key**: `run.ps1 -Engine gemini` borra `GEMINI_API_KEY`, `GOOGLE_API_KEY` y las variables de Vertex del entorno y fija `GEMINI_DEFAULT_AUTH_TYPE=oauth-personal`.
+
+- **Qué toma:** solo issues `backlog` con la etiqueta `gemini`, con las mismas reglas de orden, sprint y bloqueo. El agente Claude salta esos issues, así que nunca trabajan en el mismo ítem. A Gemini le tocan áreas de código separadas (la app y el firmware); para darle otro ítem, ponle `gemini`.
+- **Qué no toma:** bugs con `agent` (son del agente Claude) ni nada con `humano`.
+- **Aislado del otro agente:** su propio clon, logs y configuración en `%LOCALAPPDATA%\smartcity-agent-gemini`, rama `agent/gemini-<n>` y un PR abierto a la vez, independiente del de Claude. Comparten la bitácora, las métricas (por modelo) y la pausa con `agent:pausa`.
+- **Permisos:** la misma lista de permitidos y denegados que Claude, como política de Gemini CLI de nivel admin (`--admin-policy`), que ni el modelo ni la configuración del usuario pueden ampliar. En modo sin supervisión, lo que no está permitido se deniega. Las protecciones del script (push deshabilitado, rutas protegidas, verificaciones) son las mismas.
+- **Configuración aislada:** `GEMINI_CLI_HOME` apunta a `%LOCALAPPDATA%\smartcity-agent-gemini\home`, así que no usa ni cambia tu `~/.gemini`, que puede seguir con su API key.
+- **Modelo fijado:** `gemini-2.5-pro`; para cambiarlo, `-Model` en los argumentos de la tarea.
+
+Instalación, una sola vez, en PowerShell desde la raíz del repositorio:
+
+```powershell
+# 1. Iniciar sesión con Google en la configuración del agente (no en la tuya)
+$env:GEMINI_CLI_HOME = "$env:LOCALAPPDATA\smartcity-agent-gemini\home"
+Remove-Item Env:GEMINI_API_KEY -ErrorAction SilentlyContinue   # solo en esta ventana
+gemini                       # elegir "Sign in with Google"; salir con /quit
+# 2. Simulacro y registro de la tarea (corre 8 min después de iniciar sesión y luego cada hora)
+powershell -ExecutionPolicy Bypass -File scripts\agent\run.ps1 -Engine gemini -DryRun
+powershell -ExecutionPolicy Bypass -File scripts\agent\install.ps1 -Engine gemini
+```
+
+Si la sesión de Google vence, la corrida falla con "Gemini no tiene sesion de Google" en la bitácora: repite el paso 1. Para quitarlo: `install.ps1 -Engine gemini -Uninstall`.
+
 ## Límites conocidos
 
 - Solo corre con la laptop encendida y la sesión iniciada. Para que corra sin la laptop, el mismo diseño se puede mover a GitHub Actions con `anthropics/claude-code-action` y un token de la suscripción (`claude setup-token`).
