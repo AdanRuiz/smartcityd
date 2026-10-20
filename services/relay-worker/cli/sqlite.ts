@@ -40,7 +40,12 @@ export function sqliteDb(migrations: URL): { db: Db; count: (sql: string) => num
         sqlite.exec('COMMIT')
         return results
       } catch (error) {
-        sqlite.exec('ROLLBACK')
+        // Some errors, such as SQLITE_FULL, already rolled the transaction back.
+        try {
+          sqlite.exec('ROLLBACK')
+        } catch {
+          // no transaction left to roll back
+        }
         throw error
       }
     },

@@ -34,6 +34,7 @@ Los issues de backlog no llevan la etiqueta `agent`: esa es para los bugs delega
 
 | ID | Ítem | MoSCoW | Fase | Quién | Estado | Requisitos | Aceptación y notas |
 |---|---|---|---|---|---|---|---|
+| PB-1 | Relay: rechazar escrituras con `restricted: storage full` cuando el almacenamiento se llena y no hay días archivados que purgar | Must | 4 | agente | hecho · #67 | RELAY-4, ADR-20 | |
 | PB-2 | Relay: exportación por día (`GET /v1/export?c=&day=`) | Must | 4 | agente | hecho · #1 | RELAY-4, NFR-4 | |
 | PB-3 | Relay: retención condicionada a snapshots archivados | Must | 4 | agente | hecho · #3, #6 | RELAY-4, GOAL-2 | |
 | PB-4 | Relay: importación de snapshots | Must | 4 | agente | hecho · #5 | NFR-4, SNAP-6 | |
