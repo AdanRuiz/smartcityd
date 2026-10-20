@@ -11,6 +11,7 @@ export {
   type ClientOptions,
   type Dataset,
   type DatasetInput,
+  type HistoryQuery,
   type ObservationInput,
   type ObservationQuery,
   type PublishOptions,

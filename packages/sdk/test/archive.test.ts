@@ -170,6 +170,26 @@ describe('sc.archive.read (SNAP-6)', () => {
     sc.close()
   })
 
+  it('observations.history joins the readings the relays keep with those of the snapshots, once each', async () => {
+    const recent = observation(NEXT + 10, 40)
+    const otherDataset = sign(author, KIND.OBSERVATION, [['c', CITY], ['a', `${KIND.DATASET}:${'0'.repeat(64)}:noise`]], { v: 1, obs: [{ ts: START + 150, values: { db: 60 } }] }, START + 150)
+    const file = snapshot('daily', 'd.gz', { from: START, to: END }, canonicalNdjson([a, otherDataset, b]), ['https://r2.example/d.gz'])
+    // The relay still has `b` (archived too) and `recent`, a day not archived yet.
+    const { sc } = setup({ 'https://r2.example/d.gz': file.gzip }, [file.event, b, recent])
+    const discarded: ArchiveDiscard[] = []
+    const readings = await sc.observations.history({ dataset: datasetTag[1]!, from: DAY, to: '2025-10-09', onDiscard: (d) => discarded.push(d) })
+    expect(readings.map((r) => [r.event, r.values.pm25])).toEqual([
+      [a.id, 10],
+      [b.id, 20],
+      [recent.id, 40],
+    ])
+    expect(discarded).toEqual([])
+    const first = await sc.observations.history({ dataset: datasetTag[1]!, from: DAY })
+    expect(first.map((r) => r.event)).toEqual([a.id, b.id])
+    await expect(sc.observations.history({ dataset: datasetTag[1]!, from: '2025-10-09', to: DAY })).rejects.toThrow('ends before it starts')
+    sc.close()
+  })
+
   it('rejects a malformed or inverted range before asking anyone', () => {
     const { sc } = setup({}, [])
     expect(() => sc.archive.read({ from: '2025-10-32' })).toThrow('not a UTC day')

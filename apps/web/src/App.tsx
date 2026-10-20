@@ -4,6 +4,7 @@ import { ClientProvider, useApp, useOutbox, useRelayStatus } from './client'
 import { CityPicker } from './geo/CityPicker'
 import { startAutoLocate, usePlace } from './geo/store'
 import { AboutPage } from './pages/AboutPage'
+import { HistoryPage } from './pages/HistoryPage'
 import { IdentityPage } from './pages/IdentityPage'
 import { MapPage } from './pages/MapPage'
 import { RelaysPage } from './pages/RelaysPage'
@@ -25,6 +26,7 @@ function Header() {
         <NavLink to="/" end>
           Mapa
         </NavLink>
+        <NavLink to="/historial">Historial</NavLink>
         <NavLink to="/reportes">Reportes</NavLink>
         <NavLink to="/relays">
           Relays <span className={`chip ${open === 0 ? 'bad' : 'ok'}`}>{`${open}/${relays.length}`}</span>
@@ -53,6 +55,7 @@ export function App() {
           <main>
             <Routes>
               <Route path="/" element={<MapPage />} />
+              <Route path="/historial" element={<HistoryPage />} />
               <Route path="/reportes" element={<ReportsPage />} />
               <Route path="/relays" element={<RelaysPage />} />
               <Route path="/confianza" element={<TrustPage />} />
