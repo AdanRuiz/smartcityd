@@ -11,13 +11,21 @@
   checks protected paths, runs build/lint/typecheck/test, pushes the branch and
   opens the PR. Nothing is ever merged or deployed. See docs/operacion/agente.md.
 
+  With -Engine gemini it is a second, parallel agent: Gemini CLI signed in with
+  the user's Google account (never an API key), its own clone and state under
+  %LOCALAPPDATA%\smartcity-agent-gemini, only backlog issues labeled `gemini`
+  and no bugs. Claude skips those issues, so the two never take the same item.
+
   ASCII only: Windows PowerShell 5.1 reads BOM-less scripts as ANSI.
 #>
 param(
+  [ValidateSet('claude', 'gemini')]
+  [string]$Engine = 'claude',
   [int]$MaxIssues = 3,
   [int]$TaskTimeoutMinutes = 45,
-  # Pinned so a Claude Code update cannot silently change the model behind the PRs.
-  [string]$Model = 'claude-opus-5-5',
+  # Pinned so a CLI update cannot silently change the model behind the PRs.
+  # Empty means the engine default: claude-opus-5-5 or gemini-2.5-pro.
+  [string]$Model = '',
   [Alias('SkipRoadmap')]
   [switch]$SkipBacklog,
   # Agent items proposed for a new weekly milestone; the maintainer adjusts them on Monday.
@@ -33,7 +41,11 @@ $OutputEncoding = $Utf8
 [Console]::OutputEncoding = $Utf8
 
 $SourceRepo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$StateDir = Join-Path $env:LOCALAPPDATA 'smartcity-agent'
+$IsGemini = $Engine -eq 'gemini'
+if (-not $Model) { $Model = if ($IsGemini) { 'gemini-2.5-pro' } else { 'claude-opus-5-5' } }
+$StateDir = Join-Path $env:LOCALAPPDATA $(if ($IsGemini) { 'smartcity-agent-gemini' } else { 'smartcity-agent' })
+# Gemini CLI reads its settings and Google sign-in from here instead of the user's ~/.gemini.
+$GeminiHome = Join-Path $StateDir 'home'
 $Clone = Join-Path $StateDir 'repo'
 $BinDir = Join-Path $StateDir 'bin'
 $LogDir = Join-Path $StateDir 'logs'
@@ -45,8 +57,11 @@ $PromptFiles = @('scripts/agent/prompt-issue.md', 'scripts/agent/prompt-backlog.
 $PromptVersion = [string](Exec { git -C $SourceRepo log -1 --format=%h -- @PromptFiles } -AllowFail)
 if (-not $PromptVersion) { $PromptVersion = 'sin-version' }
 if (Exec { git -C $SourceRepo status --porcelain -- @PromptFiles } -AllowFail) { $PromptVersion += '+local' }
-$ClaudeVersion = 'desconocida'
-try { $ClaudeVersion = ([string](Exec { claude.cmd --version } -AllowFail) -split ' ')[0] } catch { }
+$CliVersion = 'desconocida'
+try {
+  $CliVersion = if ($IsGemini) { ([string](Exec { gemini.cmd --version } -AllowFail)).Trim() }
+    else { ([string](Exec { claude.cmd --version } -AllowFail) -split ' ')[0] }
+} catch { }
 
 $LabelTodo = 'agent'
 $LabelBlocked = 'agent:bloqueado'
@@ -57,6 +72,9 @@ $LabelLog = 'agent:bitacora'
 # Product backlog (docs/backlog/producto.md): one issue per item; `humano` items are never taken.
 $LabelBacklog = 'backlog'
 $LabelHuman = 'humano'
+# Backlog items for the Gemini agent; the Claude agent takes every other one.
+$LabelGemini = 'gemini'
+$BranchPrefix = if ($IsGemini) { 'agent/gemini-' } else { 'agent/backlog-' }
 $BacklogDoc = 'docs\backlog\producto.md'
 $Runs = New-Object System.Collections.ArrayList
 $RunError = $null
@@ -66,8 +84,43 @@ $LastStats = $null
 $LastPrUrl = ''
 # Paths the agent must never change; a PR touching them is not opened.
 $ProtectedPaths = '^(\.github/|scripts/agent/|LICENSE$|pnpm-lock\.yaml$|.*\.env|.*\.dev\.vars$)'
-$PrFooter = "Generado sin supervision por ``scripts/agent/run.ps1`` ($RunId, prompts ``$PromptVersion``, modelo ``$Model``, claude ``$ClaudeVersion``). Revisar antes de mezclar.`n`n" +
-  [char]::ConvertFromUtf32(0x1F916) + ' Generated with [Claude Code](https://claude.com/claude-code)'
+$PrFooter = "Generado sin supervision por ``scripts/agent/run.ps1`` ($RunId, prompts ``$PromptVersion``, modelo ``$Model``, $Engine ``$CliVersion``). Revisar antes de mezclar.`n`n" +
+  [char]::ConvertFromUtf32(0x1F916) + $(if ($IsGemini) { ' Generado con [Gemini CLI](https://github.com/google-gemini/gemini-cli)' } else { ' Generated with [Claude Code](https://claude.com/claude-code)' })
+
+# Same allow and deny lists as $ClaudeSettings, as a Gemini CLI policy. It is loaded with
+# --admin-policy, the top tier, so neither the user's nor the workspace's policies can widen it.
+# Headless mode denies whatever is not allowed here (`ask_user` counts as deny).
+$GeminiPolicy = @'
+[[rule]]
+toolName = ["read_file", "read_many_files", "list_directory", "glob", "grep_search", "write_file", "replace", "write_todos"]
+decision = "allow"
+priority = 100
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = ["pnpm", "node", "git status", "git diff", "git log", "git show", "git add", "git commit", "git rm", "git mv", "git restore", "ls", "cat", "head", "tail", "wc", "grep", "find", "sort", "diff", "mkdir"]
+decision = "allow"
+priority = 100
+
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = ["git push", "git remote", "git config", "gh", "pnpm add", "pnpm remove", "pnpm up", "pnpm update", "pnpm dlx", "pnpm publish", "npx", "curl", "wget", "powershell", "pwsh"]
+decision = "deny"
+priority = 900
+denyMessage = "Prohibido para el agente sin supervision (scripts/agent/run.ps1)."
+
+[[rule]]
+toolName = "run_shell_command"
+commandRegex = "^(pnpm|node)\\b.*(deploy|wrangler|--remote)"
+decision = "deny"
+priority = 900
+denyMessage = "Desplegar esta prohibido para el agente."
+
+[[rule]]
+toolName = ["web_fetch", "google_web_search", "activate_skill"]
+decision = "deny"
+priority = 900
+'@
 
 # Permissions for the headless session. Everything not allowed is denied, since
 # -p mode cannot prompt. Deploys are also blocked by a bogus Cloudflare token.
@@ -116,7 +169,7 @@ function Test-Checks {
 
 # Errors worth retrying on a later run: quota, rate limits, overload, network.
 $TransientStatus = 429, 500, 502, 503, 504, 529
-$TransientText = 'usage limit|rate limit|limit reached|overloaded|ECONNRESET|ETIMEDOUT|ENOTFOUND|network|socket hang up'
+$TransientText = 'usage limit|rate limit|limit reached|overloaded|ECONNRESET|ETIMEDOUT|ENOTFOUND|network|socket hang up|RESOURCE_EXHAUSTED|quota|UNAVAILABLE'
 
 # Returns @{ status = 'ok' | 'transient' | 'error'; text = <result or reason> }.
 function Invoke-Claude([string]$Prompt, [string]$Tag) {
@@ -167,6 +220,64 @@ function Invoke-Claude([string]$Prompt, [string]$Tag) {
   return @{ status = 'ok'; text = $result }
 }
 
+# Same contract as Invoke-Claude, for Gemini CLI signed in with Google (oauth-personal).
+function Invoke-Gemini([string]$Prompt, [string]$Tag) {
+  $promptFile = Join-Path $StateDir "prompt-$RunId.md"
+  $policyFile = Join-Path $StateDir 'gemini-policy.toml'
+  $outFile = Join-Path $LogDir "$RunId-$Tag-gemini.json"
+  $errFile = Join-Path $LogDir "$RunId-$Tag-gemini.err"
+  [IO.File]::WriteAllText($promptFile, $Prompt, $Utf8)
+  [IO.File]::WriteAllText($policyFile, $GeminiPolicy, $Utf8)
+
+  $exe = Get-Command gemini.cmd -ErrorAction SilentlyContinue | Select-Object -First 1
+  # The prompt arrives on stdin; -p only switches to headless mode and is appended to it.
+  $argLine = "-p `"Sigue las instrucciones de arriba.`" --model $Model --output-format json --approval-mode auto_edit --skip-trust --admin-policy `"$policyFile`""
+  $clock = [Diagnostics.Stopwatch]::StartNew()
+  $p = Start-Process -FilePath $exe.Source -ArgumentList $argLine -WorkingDirectory $Clone `
+    -RedirectStandardInput $promptFile -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
+    -NoNewWindow -PassThru
+  $null = $p.Handle
+  if (-not $p.WaitForExit($TaskTimeoutMinutes * 60000)) {
+    Write-Host "Gemini exceeded $TaskTimeoutMinutes min; killing it."
+    Exec { taskkill /PID $p.Id /T /F 2>&1 } -AllowFail | Out-Host
+    return @{ status = 'error'; text = "la sesion excedio $TaskTimeoutMinutes min; conviene partir la tarea" }
+  }
+  $raw = [IO.File]::ReadAllText($outFile, $Utf8)
+  $stderr = if (Test-Path $errFile) { [IO.File]::ReadAllText($errFile, $Utf8).Trim() } else { '' }
+  # Warnings may precede the JSON object on stdout.
+  $start = $raw.IndexOf('{')
+  try { $json = if ($start -ge 0) { $raw.Substring($start) | ConvertFrom-Json } else { $null } } catch { $json = $null }
+  if ($null -eq $json) {
+    $why = (($stderr -split "`r?`n") | Where-Object { $_ } | Select-Object -First 1)
+    Write-Host "Unreadable Gemini output. stdout: $raw stderr: $stderr"
+    $kind = if ("$raw $stderr" -match $TransientText) { 'transient' } else { 'error' }
+    return @{ status = $kind; text = "la CLI de Gemini no respondio: $why" }
+  }
+  $stats = Get-Prop $json 'stats'
+  $models = Get-Prop $stats 'models'
+  $requests = 0
+  if ($models) { foreach ($m in $models.PSObject.Properties) { $requests += [int](Get-Prop (Get-Prop $m.Value 'api') 'totalRequests') } }
+  $script:LastStats = @{
+    turns = $requests
+    minutes = [math]::Round($clock.Elapsed.TotalMinutes, 1)
+    denials = [int](Get-Prop (Get-Prop (Get-Prop $stats 'tools') 'totalDecisions') 'reject')
+    usd = $null
+    model = if ($models) { @($models.PSObject.Properties | ForEach-Object { $_.Name }) -join ', ' } else { '' }
+  }
+  $err = Get-Prop $json 'error'
+  if ($err -or $p.ExitCode -ne 0) {
+    $msg = if ($err) { "$(Get-Prop $err 'type') $(Get-Prop $err 'message')".Trim() } else { "codigo de salida $($p.ExitCode)" }
+    Write-Host "Gemini reported an error: $msg"
+    $transient = "$msg $stderr" -match $TransientText
+    return @{ status = $(if ($transient) { 'transient' } else { 'error' }); text = "error de Gemini: $msg" }
+  }
+  return @{ status = 'ok'; text = [string](Get-Prop $json 'response') }
+}
+
+function Invoke-Agent([string]$Prompt, [string]$Tag) {
+  if ($IsGemini) { return Invoke-Gemini $Prompt $Tag } else { return Invoke-Claude $Prompt $Tag }
+}
+
 function Test-Paused {
   $pause = @((Get-GhJson { gh issue list --repo $Slug --label $LabelPause --state open --limit 1 --json number }) | ForEach-Object { $_ })
   if ($pause.Count -gt 0) { Write-Host "Paused by open issue #$($pause[0].number) labeled '$LabelPause'." }
@@ -189,7 +300,7 @@ function Invoke-Task([string]$Branch, [string]$Prompt, [string]$Closes) {
   Exec { pnpm --dir $Clone install --frozen-lockfile 2>&1 } | Out-Host
   if ($DryRun) { Write-Host "[dry-run] would run Claude on $Branch"; return 'dry-run' }
 
-  $session = Invoke-Claude $Prompt ($Branch -replace '^agent/', '')
+  $session = Invoke-Agent $Prompt ($Branch -replace '^agent/', '')
   if ($session.status -eq 'transient') { return "retry: $($session.text)" }
   if ($session.status -eq 'error') { return "blocked: $($session.text)" }
   $result = $session.text
@@ -265,7 +376,7 @@ function Publish-RunLog {
   $cell = { param($v) ("$v" -replace '\r?\n', ' ' -replace '\|', '\|') }
   $used = @($Runs | ForEach-Object { $_.model } | Where-Object { $_ -and $_ -ne '-' } | Sort-Object -Unique) -join ', '
   if (-not $used) { $used = $Model }
-  $lines = @("### Corrida $RunId - prompts ``$PromptVersion`` - modelo ``$used`` - claude ``$ClaudeVersion``", '')
+  $lines = @("### Corrida $RunId - prompts ``$PromptVersion`` - modelo ``$used`` - $Engine ``$CliVersion``", '')
   if ($Runs.Count -gt 0) {
     $lines += '| Tarea | Resultado | PR | Turnos | Min | Denegaciones | USD eq. API |'
     $lines += '|---|---|---|---|---|---|---|'
@@ -305,11 +416,14 @@ function Get-MilestoneTitle($Issue) {
 
 # Order of producto.md: the week's milestone by issue number; then the current phase, then the
 # phase ahead, by priority and number. Never `humano`, blocked items or a phase further away.
-function Get-BacklogQueue($Issues, $Phase, [string]$Sprint) {
+# Only the items of one engine (-For), see $LabelGemini.
+function Get-BacklogQueue($Issues, $Phase, [string]$Sprint, [string]$For = $Engine) {
   $prio = @{ must = 0; should = 1; could = 2 }
   $rows = foreach ($i in $Issues) {
     $names = Get-LabelNames $i
     if ($names -contains $LabelHuman -or $names -contains $LabelBlocked) { continue }
+    # Each engine has its own items: `gemini` ones for Gemini, all the others for Claude.
+    if (($For -eq 'gemini') -ne ($names -contains $LabelGemini)) { continue }
     $inSprint = (Get-MilestoneTitle $i) -eq $Sprint
     $rank = if ($names -contains "fase-$($Phase.current)") { 0 } elseif ($Phase.ahead -and $names -contains "fase-$($Phase.ahead)") { 1 } else { -1 }
     if (-not $inSprint -and $rank -lt 0) { continue }
@@ -329,9 +443,13 @@ function Initialize-Sprint($Week, $Phase) {
   if ($DryRun) { Write-Host "[dry-run] would create milestone $($Week.name) and propose $SprintSize items"; return }
   $due = $Week.sunday.AddHours(23).AddMinutes(59).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
   $desc = "Sprint del $($Week.monday.ToString('yyyy-MM-dd')) al $($Week.sunday.ToString('yyyy-MM-dd')). " +
-    (U "Objetivo: lo escribe el mantenedor en la planeaci\u00f3n del lunes. ``run.ps1`` propuso los primeros $SprintSize \u00edtems del agente; aj\u00fastalos.")
-  Exec { gh api "repos/$Slug/milestones" -f "title=$($Week.name)" -f "due_on=$due" -f "description=$desc" 2>&1 } | Out-Host
-  $proposal = @(Get-BacklogQueue (Get-BacklogIssues) $Phase $Week.name | Select-Object -First $SprintSize)
+    (U "Objetivo: lo escribe el mantenedor en la planeaci\u00f3n del lunes. ``run.ps1`` propuso los siguientes \u00edtems de cada agente; aj\u00fastalos.")
+  # Both agents may try at the same time; only the one that creates it proposes items.
+  Exec { gh api "repos/$Slug/milestones" -f "title=$($Week.name)" -f "due_on=$due" -f "description=$desc" 2>&1 } -AllowFail | Out-Host
+  if ($LASTEXITCODE -ne 0) { Write-Host "Milestone $($Week.name) not created (probably the other agent did)."; return }
+  $all = Get-BacklogIssues
+  $proposal = @(Get-BacklogQueue $all $Phase $Week.name 'claude' | Select-Object -First $SprintSize) +
+    @(Get-BacklogQueue $all $Phase $Week.name 'gemini' | Select-Object -First ([math]::Ceiling($SprintSize / 2)))
   foreach ($i in $proposal) { Exec { gh issue edit $i.number --repo $Slug --milestone $Week.name 2>&1 } | Out-Host }
   Write-Host "Created milestone $($Week.name) with $($proposal.Count) proposed items."
 }
@@ -381,7 +499,7 @@ function Split-BacklogIssue($Issue, [string]$Outcome) {
 
 New-Item -ItemType Directory -Force $LogDir, $BinDir | Out-Null
 Start-Transcript -Path (Join-Path $LogDir "$RunId.log") | Out-Null
-$mutex = New-Object System.Threading.Mutex($false, 'Local\smartcity-agent')
+$mutex = New-Object System.Threading.Mutex($false, $(if ($IsGemini) { 'Local\smartcity-agent-gemini' } else { 'Local\smartcity-agent' }))
 if (-not $mutex.WaitOne(0)) { Write-Host 'Another run is in progress.'; Stop-Transcript | Out-Null; exit 0 }
 
 try {
@@ -390,10 +508,22 @@ try {
   foreach ($cmd in 'git', 'gh', 'corepack') {
     if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) { throw "$cmd is not in PATH. See docs/operacion/agente.md." }
   }
-  if (-not (Get-Command claude.exe, claude.cmd -ErrorAction SilentlyContinue)) { throw 'claude is not in PATH.' }
+  if ($IsGemini) {
+    if (-not (Get-Command gemini.cmd -ErrorAction SilentlyContinue)) { throw 'gemini is not in PATH.' }
+    # Google sign-in only: an API key would be billed. The one-time sign-in is in docs/operacion/agente.md.
+    if (-not (Test-Path (Join-Path $GeminiHome '.gemini\oauth_creds.json'))) {
+      throw "Gemini no tiene sesion de Google en $GeminiHome. Ver docs/operacion/agente.md, 'Agente Gemini'."
+    }
+  }
+  elseif (-not (Get-Command claude.exe, claude.cmd -ErrorAction SilentlyContinue)) { throw 'claude is not in PATH.' }
 
   # Subscription auth only: an API key in the environment would bill the API instead.
   Remove-Item Env:ANTHROPIC_API_KEY, Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue
+  if ($IsGemini) {
+    Remove-Item Env:GEMINI_API_KEY, Env:GOOGLE_API_KEY, Env:GOOGLE_GENAI_USE_VERTEXAI, Env:GOOGLE_GENAI_USE_GCA, Env:GOOGLE_CLOUD_ACCESS_TOKEN -ErrorAction SilentlyContinue
+    $env:GEMINI_CLI_HOME = $GeminiHome
+    $env:GEMINI_DEFAULT_AUTH_TYPE = 'oauth-personal'
+  }
   $env:CLOUDFLARE_API_TOKEN = 'disabled-for-smartcity-agent'
   $env:GIT_TERMINAL_PROMPT = '0'
   Exec { corepack enable --install-directory $BinDir pnpm 2>&1 } | Out-Host
@@ -432,6 +562,8 @@ try {
   $issues = @((Get-GhJson { gh issue list --repo $Slug --label $LabelTodo --state open --limit 50 --json number,title,body }) |
     ForEach-Object { $_ } | Sort-Object number)
   $done = 0
+  # Bugs stay with the Claude agent; the Gemini agent only takes its backlog items.
+  if ($IsGemini) { $issues = @() }
   foreach ($issue in $issues) {
     if ($StopRun -or $done -ge $MaxIssues -or (Test-Paused)) { break }
     $branch = "agent/issue-$($issue.number)"
@@ -454,7 +586,7 @@ try {
   # unlocks the next one. A blocked item gets `agent:bloqueado` and the next run takes the next
   # item; a transient failure leaves it untouched for a retry. Older agent/roadmap-* PRs also gate.
   $openBacklog = @((Get-GhJson { gh pr list --repo $Slug --state open --limit 100 --json headRefName }) |
-    ForEach-Object { $_ } | Where-Object { $_.headRefName -like 'agent/backlog-*' -or $_.headRefName -like 'agent/roadmap-*' })
+    ForEach-Object { $_ } | Where-Object { $_.headRefName -like "$BranchPrefix*" -or (-not $IsGemini -and $_.headRefName -like 'agent/roadmap-*') })
   if ($SkipBacklog) { Write-Host 'Backlog skipped by flag.' }
   elseif ($StopRun) { Write-Host 'Backlog skipped: a transient error stopped this run.' }
   elseif (Test-Paused) { }
@@ -467,8 +599,8 @@ try {
       $week = Get-SprintWeek
       Initialize-Sprint $week $phase
       # One ls-remote for all branches: a branch means a PR was opened (to retry, delete it).
-      $taken = @(Exec { git ls-remote --heads $RemoteUrl 'agent/backlog-*' } | ForEach-Object { ($_ -split 'refs/heads/')[-1] })
-      $queue = @(Get-BacklogQueue (Get-BacklogIssues) $phase $week.name | Where-Object { $taken -notcontains "agent/backlog-$($_.number)" })
+      $taken = @(Exec { git ls-remote --heads $RemoteUrl "$BranchPrefix*" } | ForEach-Object { ($_ -split 'refs/heads/')[-1] })
+      $queue = @(Get-BacklogQueue (Get-BacklogIssues) $phase $week.name | Where-Object { $taken -notcontains "$BranchPrefix$($_.number)" })
       Write-Host "Backlog: phase $($phase.current) (ahead: $($phase.ahead)), sprint $($week.name), $($queue.Count) items for the agent."
       if ($queue.Count -eq 0) { Write-Host 'Nothing for the agent in the sprint, the current phase or the phase ahead.' }
       else {
@@ -478,8 +610,10 @@ try {
           Exec { gh issue edit $item.number --repo $Slug --milestone $week.name 2>&1 } | Out-Host
         }
         $template = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'prompt-backlog.md'), $Utf8)
+        # The commit trailer names the model that actually wrote the code.
+        if ($IsGemini) { $template = $template.Replace('Co-Authored-By: Claude <noreply@anthropic.com>', 'Assisted-by: Gemini CLI') }
         $prompt = "$template`n#$($item.number): $($item.title)`n`n$($item.body)`n"
-        $outcome = Invoke-Task "agent/backlog-$($item.number)" $prompt ([string]$item.number)
+        $outcome = Invoke-Task "$BranchPrefix$($item.number)" $prompt ([string]$item.number)
         Write-Host "Backlog #$($item.number): $outcome"
         Add-RunRow "#$($item.number) $($item.title)" $outcome
         if ($outcome -like 'split:*' -and -not (Split-BacklogIssue $item $outcome)) {
