@@ -38,3 +38,49 @@ function Get-SprintWeek([datetime]$Day = (Get-Date)) {
     sunday = $monday.AddDays(6)
   }
 }
+
+# --- Gemini agent: Antigravity CLI (agy) ---------------------------------------
+# agy has no flag or variable for another config dir, so the agent's rules live in the
+# user's own settings.json. install.ps1 -Engine gemini adds them (and -Uninstall removes
+# them); run.ps1 refuses to start without them. Same lists as $ClaudeSettings in run.ps1.
+#
+# Tested with agy 1.1.28: `*` is not a wildcard (`command(git log)` matches only that exact
+# line), `command(regex:...)` is, and deny wins over allow. A loose `.*` would also let
+# chained commands through (`pnpm test; gh pr create`), so an allowed command may only be
+# followed by plain words or quoted strings with no expansion: no ; & | $ ` % < > ( ) { }.
+# A message with parentheses goes in quotes, as in git commit -m "Relay (RELAY-4)".
+$AgyArg = '("[^"`$%]*"|''[^'']*''|[^\s"''`$%;&|<>(){}]+)'
+# agy is a Go binary: RE2 rejects `\ `, so spaces in the prefix become ` +`.
+function New-AgyAllowRule([string]$Prefix) { return 'command(regex:^{0}( +{1})*$)' -f ([regex]::Escape($Prefix) -replace '\\ ', ' +'), $AgyArg }
+$AgyAllow = @(
+  'pnpm', 'node',
+  'git status', 'git diff', 'git log', 'git show', 'git add', 'git commit', 'git rm', 'git mv', 'git restore',
+  'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'find', 'sort', 'diff', 'mkdir'
+) | ForEach-Object { New-AgyAllowRule $_ }
+# agy matches a regex against the whole command line, so every deny rule ends in .*
+# (a rule ending in \b never matched `pnpm add left-pad`).
+$AgyDeny = @(
+  'command(regex:^git +(push|remote|config)( .*)?$)',
+  'command(regex:^pnpm +(add|remove|rm|up|update|dlx|publish|exec)( .*)?$)',
+  'command(regex:^(pnpm|node) .*(deploy|wrangler|--remote).*$)',
+  'command(regex:^(gh|npx|curl|wget|iwr|irm|Invoke-WebRequest|Invoke-RestMethod|powershell|pwsh|cmd)(\.exe)?( .*)?$)'
+)
+
+function Get-AgySettingsPath {
+  return Join-Path (Join-Path (Join-Path $env:USERPROFILE '.gemini') 'antigravity-cli') 'settings.json'
+}
+
+# Throws unless agy is set up for the agent: Google account (no API key provider),
+# no blanket auto-approval, and every allow and deny rule above present.
+function Assert-AgySettings {
+  $f = Get-AgySettingsPath
+  if (-not (Test-Path $f)) { throw "No existe $f. Abre ``agy`` una vez, inicia sesion con Google y corre install.ps1 -Engine gemini." }
+  $cfg = [IO.File]::ReadAllText($f, (New-Object System.Text.UTF8Encoding $false)) | ConvertFrom-Json
+  if ((Get-Prop $cfg 'modelProvider') -eq 'gemini') { throw 'agy usa modelProvider "gemini" (API key); el agente solo usa la cuenta de Google.' }
+  if ((Get-Prop $cfg 'toolPermission') -eq 'always-proceed') { throw 'agy tiene toolPermission "always-proceed", que aprobaria todo; el agente no corre asi.' }
+  $perm = Get-Prop $cfg 'permissions'
+  $allow = @(Get-Prop $perm 'allow')
+  $deny = @(Get-Prop $perm 'deny')
+  $missing = @($AgyAllow | Where-Object { $allow -notcontains $_ }) + @($AgyDeny | Where-Object { $deny -notcontains $_ })
+  if ($missing.Count -gt 0) { throw "Faltan $($missing.Count) reglas del agente en $f; corre install.ps1 -Engine gemini." }
+}
