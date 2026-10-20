@@ -15,12 +15,26 @@ export type WebSocketConstructor = new (url: string) => WebSocketLike
 
 export const OPEN = 1
 
+/** The part of a `fetch` response the archive reader uses. */
+export interface FetchResponse {
+  readonly ok: boolean
+  arrayBuffer(): Promise<ArrayBuffer>
+}
+
+export type Fetch = (url: string) => Promise<FetchResponse>
+
 interface Globals {
   setTimeout(fn: () => void, ms: number): unknown
   clearTimeout(handle: unknown): void
   WebSocket?: WebSocketConstructor
   TextEncoder: new () => { encode(text: string): Uint8Array }
+  TextDecoder: new () => { decode(bytes: Uint8Array): string }
   URL: new (url: string) => ParsedUrl
+  fetch?: Fetch
+  crypto: { subtle: { digest(algorithm: 'SHA-256', data: Uint8Array): Promise<ArrayBuffer> } }
+  Blob: new (parts: Uint8Array[]) => { stream(): { pipeThrough(transform: unknown): unknown } }
+  DecompressionStream: new (format: 'gzip') => unknown
+  Response: new (body: unknown) => { arrayBuffer(): Promise<ArrayBuffer> }
 }
 
 export interface ParsedUrl {
@@ -41,6 +55,21 @@ export const globalWebSocket = (): WebSocketConstructor | undefined => g.WebSock
 
 const encoder = new g.TextEncoder()
 export const byteLength = (text: string): number => encoder.encode(text).length
+
+export const globalFetch = (): Fetch | undefined => (g.fetch ? (url) => g.fetch!(url) : undefined)
+
+export const decodeUtf8 = (bytes: Uint8Array): string => new g.TextDecoder().decode(bytes)
+
+export async function sha256Hex(data: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(await g.crypto.subtle.digest('SHA-256', data))
+  return Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+/** Rejects when the data is not gzip. */
+export async function gunzip(data: Uint8Array): Promise<Uint8Array> {
+  const stream = new g.Blob([data]).stream().pipeThrough(new g.DecompressionStream('gzip'))
+  return new Uint8Array(await new g.Response(stream).arrayBuffer())
+}
 
 export const now = (): number => Math.floor(Date.now() / 1000)
 

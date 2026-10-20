@@ -4,7 +4,9 @@ Cliente del protocolo SmartCity para navegador, Node ≥ 20 y Workers. Especific
 
 Estado (fase 3): cliente, firmantes local y NIP-07, pool de relays con estado, validación al publicar y al recibir, publicación y consulta de `dataset`, `source` y `observation`, agrupación de lecturas; almacén local y cola de salida (IndexedDB o memoria), reportes y `report_update` con llave desechable, refirmado de la cola cuando un relay la encuentra demasiado antigua, niveles de confianza (`sc.trustOf`, roles, moderación) y prueba de trabajo.
 
-Pendiente según `09-roadmap.md`: fotos en reportes (adjuntos, PRIV-4, SEC-4); `sc.archive.read` (fase 4); `state` y `live` (fase 5); rotación de raíces por mayoría (TRUST-12).
+Fase 4: historial desde snapshots con `sc.archive.read`.
+
+Pendiente según `09-roadmap.md`: fotos en reportes (adjuntos, PRIV-4, SEC-4); en `sc.archive.read`, descarga por WebTorrent, filtrado en un Web Worker y caché local de los archivos verificados (`06`); `state` y `live` (fase 5); rotación de raíces por mayoría (TRUST-12).
 
 ```ts
 import { createClient, localSigner, generateSecretKey } from '@smartcity/sdk'
@@ -31,6 +33,9 @@ const { id } = await sc.reports.create({ category: 'bache', title: 'Bache profun
 await sc.reports.update(id, { status: 'resolved', body: 'Reparado' }) // solo cuenta si la llave es authority u operator
 const abiertos = await sc.reports.query({ category: 'bache', status: 'open', trust: ['verified', 'community'] })
 sc.trustOf(event) // 'verified' | 'community' | 'flagged'
+
+// Historial fuera de la retención de los relays, desde los snapshots (SNAP-6)
+for await (const ev of sc.archive.read({ from: '2025-10-01', to: '2025-10-08', kinds: [1480], onDiscard: console.warn })) { … }
 ```
 
 En navegador, con almacén y cola que sobreviven a recargas: `createClient({ ..., storage: 'indexeddb' })`.
@@ -57,6 +62,7 @@ En navegador, con almacén y cola que sobreviven a recargas: `createClient({ ...
 | TRUST-4, TRUST-7, TRUST-10 | Solo cuentan las listas `roles` firmadas por las anclas; las anclas cuentan como `authority`. `sc.trustOf(evento)` y `sc.trust.levelOf(lectura)` calculan `verified` (rol, o llave listada en `keys` de una fuente cuyo dueño tiene rol), `flagged` (llave `blocked`, o etiqueta 1985 / denuncia 1984 de un `moderator`) o `community`. Nunca se toma del evento; `sc.trust.setAnchors()` lo recalcula y avisa por `sc.trust.onChange()`. |
 | TRUST-5 | `observations.query` y `reports.query` aceptan `trust` con los niveles que se quieren. |
 | `03`, PRIV-3, PRIV-5 | `reports.create` firma por defecto con una llave nueva (sin firmante en el cliente basta) y redondea `loc` a 4 decimales. El estado de un reporte es el del `report_update` oficial más reciente (autor `authority` u `operator`); los demás son comentarios. |
+| SNAP-6, SNAP-2, SNAP-4 | `sc.archive.read({ from: 'YYYY-MM-DD', to?, kinds?, archivers?, onDiscard? })` devuelve un iterador asíncrono con los eventos de esos días (UTC), del más antiguo al más nuevo. Busca los `snapshot` de la ciudad en los relays de lectura, descarga cada archivo (uno por `x`, aunque lo anuncien varios archivistas) de sus `urls` o de su `cid` en `ipfsGateways` y se queda con la primera copia cuyo tamaño, sha256 (`file.x`) y sha256 sin comprimir (`x`) coinciden; verifica estructura, esquema, `id` y `sig` de cada línea y descarta las inválidas sin invalidar el resto; une diario y adendas por `id` y aplica los borrados (kind 5) de su autor de los días leídos. Un día sin diario disponible se toma del consolidado mensual. Cada archivo o línea descartada llega a `onDiscard`. `fetch` se puede pasar en las opciones del cliente. |
 | — | `sc.send(evento)` publica un evento ya firmado en otro lado (una raíz fuera de línea, un dispositivo) tras verificarlo, con la misma cola. |
 | ID-2, SEC-3 | `localSigner` guarda la llave dentro del cierre y no la expone. `encryptSecretKey`/`decryptSecretKey` cifran con NIP-49 para guardarla. |
 
