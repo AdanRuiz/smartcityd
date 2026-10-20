@@ -1,4 +1,5 @@
 import { readConfig } from './config.js'
+import type { BlobStore } from './blob.js'
 import type { Env } from './env.js'
 import type { Broadcast, Counters } from './hub.js'
 import { handleHttp, json, type HttpDeps } from './http.js'
@@ -17,6 +18,21 @@ function hub(env: Env) {
   return env.HUB.get(env.HUB.idFromName('hub'))
 }
 
+// Objects keyed by their sha256; R2 checks the hash again on write.
+function r2Blobs(bucket: R2Bucket): BlobStore {
+  return {
+    has: async (x) => (await bucket.head(x)) !== null,
+    async get(x) {
+      const object = await bucket.get(x)
+      if (!object) return null
+      return { body: object.body, mime: object.httpMetadata?.contentType ?? 'application/octet-stream', size: object.size }
+    },
+    async put(x, data, mime) {
+      await bucket.put(x, data, { sha256: x, httpMetadata: { contentType: mime } })
+    },
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const broadcast: HttpDeps['broadcast'] = (result) => {
@@ -29,6 +45,7 @@ export default {
       limiter,
       now: seconds,
       broadcast,
+      blobs: env.BLOBS ? r2Blobs(env.BLOBS) : undefined,
     })
     if (response) return response
 

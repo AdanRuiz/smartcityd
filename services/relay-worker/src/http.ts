@@ -1,4 +1,5 @@
 import { acceptEvent, isNew, type AcceptDeps, type AcceptResult } from './accept.js'
+import { handleBlob, isBlobPath, type BlobStore } from './blob.js'
 import { exportEvents } from './export.js'
 import { filterFromQuery } from './filter.js'
 import { relayInfo } from './nip11.js'
@@ -8,8 +9,8 @@ import { relayInfo } from './nip11.js'
 // The app runs from arbitrary origins, `null` (file://) included (docs/spec/07, "API HTTP").
 export const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Accept',
+  'Access-Control-Allow-Methods': 'GET, HEAD, POST, PUT, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization',
 }
 
 export function json(body: unknown, status = 200, contentType = 'application/json'): Response {
@@ -19,6 +20,8 @@ export function json(body: unknown, status = 200, contentType = 'application/jso
 export interface HttpDeps extends AcceptDeps {
   /** Hands a new event to the WebSocket subscribers. */
   broadcast: (result: Extract<AcceptResult, { ok: true }>) => void
+  /** Attachments (optional; R2 in the Worker). */
+  blobs?: BlobStore
 }
 
 /** Answers the HTTP routes, or null for the ones the Worker serves itself (WebSocket, `/health`). */
@@ -29,7 +32,7 @@ export async function handleHttp(request: Request, deps: HttpDeps): Promise<Resp
   if (url.pathname === '/') {
     if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') return null
     if (request.headers.get('Accept')?.includes('application/nostr+json')) {
-      return json(relayInfo(deps.config), 200, 'application/nostr+json')
+      return json(relayInfo(deps.config, deps.blobs !== undefined), 200, 'application/nostr+json')
     }
     return new Response('SmartCity relay. Connect with a Nostr client over WebSocket, or use /v1/events.\n', {
       headers: { ...CORS, 'Content-Type': 'text/plain; charset=utf-8' },
@@ -63,6 +66,8 @@ export async function handleHttp(request: Request, deps: HttpDeps): Promise<Resp
     if (isNew(result)) deps.broadcast(result)
     return json({ ok: true, id: result.event.id, ...(result.message ? { message: result.message } : {}) })
   }
+
+  if (isBlobPath(url.pathname)) return handleBlob(request, deps)
 
   if (url.pathname === '/health') return null
   return json({ ok: false, reason: 'not found' }, 404)
