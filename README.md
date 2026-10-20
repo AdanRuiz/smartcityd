@@ -35,7 +35,7 @@ Diagrama de arquitectura (vista general y estructura del repo): [docs/arquitectu
 
 Para desarrolladores de apps: [Publicar y consumir un dataset propio](docs/desarrolladores/primer-dataset.md), [Leer el historial desde los snapshots](docs/desarrolladores/historial.md), [Reportes ciudadanos y en quién confiar](docs/desarrolladores/reportes.md) y [Dispositivos y procesos que publican solos](docs/desarrolladores/dispositivos.md).
 
-Para agentes de IA: empezar por [AGENTS.md](AGENTS.md). Agente de desarrollo sin supervisión (bugs con etiqueta `agent` y roadmap, como PRs): [docs/operacion/agente.md](docs/operacion/agente.md). Qué falta y en qué orden: [product backlog](docs/backlog/producto.md), con el sprint actual (una fase de `09`) arriba.
+Para agentes de IA: empezar por [AGENTS.md](AGENTS.md). Agente de desarrollo sin supervisión (bugs con etiqueta `agent` y roadmap, como PRs): [docs/operacion/agente.md](docs/operacion/agente.md). Qué falta y en qué orden: [product backlog](docs/backlog/producto.md), con la fase actual de `09` y el sprint de la semana arriba.
 
 ## Licencia
 
