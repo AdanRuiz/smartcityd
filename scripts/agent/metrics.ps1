@@ -43,7 +43,6 @@ if (-not $Repo) {
 }
 $Since = [DateTime]::UtcNow.AddDays(-$Days)
 
-function U([string]$s) { return [regex]::Unescape($s) }  # non-ASCII text, e.g. U('M\u00e9tricas')
 function ToUtc($s) { if ($s) { return [DateTimeOffset]::Parse([string]$s).UtcDateTime } else { return $null } }
 function Median($xs) {
   $a = @($xs | Where-Object { $null -ne $_ } | ForEach-Object { [double]$_ } | Sort-Object)
@@ -82,7 +81,8 @@ $prs = @((Get-GhJson { gh pr list --repo $Repo --state all --limit 300 --json nu
     $body = [string](Get-Prop $_ 'body')
     [pscustomobject]@{
       number = $_.number
-      kind = if ($_.headRefName -like 'agent/issue-*') { 'issue' } else { 'roadmap' }
+      # agent/backlog-* and the older agent/roadmap-* PRs both advance the backlog.
+      kind = if ($_.headRefName -like 'agent/issue-*') { 'issue' } else { 'backlog' }
       prompt = Get-Tag $body 'prompts'
       model = Get-Tag $body 'modelo'
       state = [string]$_.state
@@ -177,6 +177,31 @@ if ($lastSession.Count -gt 0 -and $null -ne $lastSession[0].denials -and $lastSe
 }
 
 # --- Report -------------------------------------------------------------------
+# --- This week's sprint (milestone named like 2026-W43, see docs/backlog/producto.md) ---
+$week = Get-SprintWeek
+$sprint = @()
+try { $sprint = @((Get-GhJson { gh issue list --repo $Repo --milestone $week.name --state all --limit 200 --json number,title,state,labels 2>$null }) | ForEach-Object { $_ }) } catch { }
+$sprintLink = "https://github.com/$Repo/issues?q=milestone%3A$($week.name)"
+$sprintOut = @("## Sprint $($week.name) (del $($week.monday.ToString('yyyy-MM-dd')) al $($week.sunday.ToString('yyyy-MM-dd')))", '')
+if ($sprint.Count -eq 0) {
+  $sprintOut += (U 'Sin milestone o sin \u00edtems para esta semana. La planeaci\u00f3n es el lunes (`docs/backlog/producto.md`).')
+} else {
+  $hasLabel = { param($i, $l) @($i.labels | ForEach-Object { $_.name }) -contains $l }
+  $open = @($sprint | Where-Object { $_.state -eq 'OPEN' })
+  $closedCount = $sprint.Count - $open.Count
+  $sprintOut += (U "[$closedCount de $($sprint.Count) cerrados]($sprintLink) ($(Pct $closedCount $sprint.Count)).")
+  $groups = @(
+    @{ title = 'Te toca (humano)'; items = @($open | Where-Object { & $hasLabel $_ 'humano' }) },
+    @{ title = 'Bloqueados'; items = @($open | Where-Object { (& $hasLabel $_ 'agent:bloqueado') -and -not (& $hasLabel $_ 'humano') }) },
+    @{ title = 'Pendientes del agente'; items = @($open | Where-Object { -not (& $hasLabel $_ 'humano') -and -not (& $hasLabel $_ 'agent:bloqueado') }) }
+  )
+  foreach ($g in $groups) {
+    if ($g.items.Count -eq 0) { continue }
+    $sprintOut += '', "**$($g.title):**"
+    $sprintOut += @($g.items | Sort-Object number | ForEach-Object { "- #$($_.number) $($_.title)" })
+  }
+}
+
 $out = @(
   $StartMarker,
   (U "## M\u00e9tricas (\u00faltimos $Days d\u00edas)"),
@@ -191,8 +216,10 @@ $out = @(
   '|---|---|---|---|---|---|---|---|---|---|',
   (Get-PrRow 'Todos' $prs),
   (Get-PrRow 'Issues' ($prs | Where-Object { $_.kind -eq 'issue' })),
-  (Get-PrRow 'Roadmap' ($prs | Where-Object { $_.kind -eq 'roadmap' }))
+  (Get-PrRow 'Backlog (y roadmap)' ($prs | Where-Object { $_.kind -eq 'backlog' }))
 )
+# The sprint goes first, right after the start marker.
+$out = @($out[0], '') + $sprintOut + @('') + $out[1..($out.Count - 1)]
 foreach ($key in 'prompt', 'model') {
   $label = if ($key -eq 'prompt') { 'prompts' } else { 'modelo' }
   foreach ($v in @($prs | ForEach-Object { $_.$key } | Sort-Object -Unique)) {
