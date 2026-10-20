@@ -69,28 +69,26 @@ Al registrarla, la primera corrida es 3 minutos después y de ahí cada hora, si
 
 ## Agente Gemini (en paralelo)
 
-Un segundo agente, igual al de Claude pero con Gemini CLI, trabaja al mismo tiempo en otros ítems del backlog. Usa la cuenta de Google del mantenedor, **nunca una API key**: `run.ps1 -Engine gemini` borra `GEMINI_API_KEY`, `GOOGLE_API_KEY` y las variables de Vertex del entorno y fija `GEMINI_DEFAULT_AUTH_TYPE=oauth-personal`.
+Un segundo agente, igual al de Claude pero con Gemini a través de la CLI de Antigravity (`agy`), trabaja al mismo tiempo en otros ítems del backlog. Usa la cuenta de Google con la que iniciaste sesión en `agy`, **nunca una API key**: `run.ps1 -Engine gemini` no arranca si el `settings.json` de `agy` tiene `"modelProvider": "gemini"` (el modo con API key) y borra `GEMINI_API_KEY` del entorno. Gemini CLI ya no sirve para esto: Google dejó de aceptar cuentas personales en él y pide pasar a Antigravity.
 
 - **Qué toma:** solo issues `backlog` con la etiqueta `gemini`, con las mismas reglas de orden, sprint y bloqueo. El agente Claude salta esos issues, así que nunca trabajan en el mismo ítem. A Gemini le tocan áreas de código separadas (la app y el firmware); para darle otro ítem, ponle `gemini`.
 - **Qué no toma:** bugs con `agent` (son del agente Claude) ni nada con `humano`.
-- **Aislado del otro agente:** su propio clon, logs y configuración en `%LOCALAPPDATA%\smartcity-agent-gemini`, rama `agent/gemini-<n>` y un PR abierto a la vez, independiente del de Claude. Comparten la bitácora, las métricas (por modelo) y la pausa con `agent:pausa`.
-- **Permisos:** la misma lista de permitidos y denegados que Claude, como política de Gemini CLI de nivel admin (`--admin-policy`), que ni el modelo ni la configuración del usuario pueden ampliar. En modo sin supervisión, lo que no está permitido se deniega. Las protecciones del script (push deshabilitado, rutas protegidas, verificaciones) son las mismas.
-- **Configuración aislada:** `GEMINI_CLI_HOME` apunta a `%LOCALAPPDATA%\smartcity-agent-gemini\home`, así que no usa ni cambia tu `~/.gemini`, que puede seguir con su API key.
-- **Modelo fijado:** `gemini-2.5-pro`; para cambiarlo, `-Model` en los argumentos de la tarea.
+- **Aislado del otro agente:** su propio clon y logs en `%LOCALAPPDATA%\smartcity-agent-gemini`, rama `agent/gemini-<n>` y un PR abierto a la vez, independiente del de Claude. Comparten la bitácora, las métricas (por modelo) y la pausa con `agent:pausa`.
+- **Permisos:** sin supervisión, `agy` deniega toda herramienta que su configuración no permita, sin quedarse esperando. Leer y escribir dentro del clon está permitido; los comandos, no. `agy` no admite otra carpeta de configuración, así que `install.ps1 -Engine gemini` agrega a **tu** `~/.gemini/antigravity-cli/settings.json` las mismas reglas que tiene Claude (`permissions.allow`: `pnpm`, `node`, `git status`, `git commit`…; `permissions.deny`: `git push`, `gh`, `pnpm add`, `npx`, `curl`, despliegues…) y guarda una copia del archivo al lado. **Ojo:** esas reglas valen también cuando usas `agy` a mano. `run.ps1` no arranca si falta alguna o si `toolPermission` es `always-proceed`. Las protecciones del script (push deshabilitado, rutas protegidas, verificaciones) son las mismas.
+- **Reglas como expresiones regulares:** en `agy` 1.1.28, `*` no es comodín y la regla se compara con la línea completa; sí funcionan `command(regex:...)` y que `deny` gane sobre `allow`. Cada comando permitido solo acepta después palabras simples o texto entre comillas, sin `;`, `&`, `|`, `$`, `` ` ``, `%`, paréntesis, llaves ni redirecciones, para que no se pueda encadenar otro comando (`pnpm test; gh pr create`). Probado: `git status`, `pnpm test` y `git commit -m "… (PB-1)"` corren; `gh`, `git push`, `git remote`, `git config`, `pnpm add`, `pnpm exec wrangler deploy`, `curl` y los encadenados se rechazan.
+- **Un rechazo corta el turno:** `agy` termina con la respuesta vacía cuando rechaza un comando. El script reanuda la misma conversación (`--conversation`) con la lista de comandos permitidos, hasta 5 veces y dentro de los 45 minutos de la tarea; el prompt ya trae esa lista desde el principio.
+- **Tarea por archivo:** `agy -p` no lee la entrada estándar, así que el script deja el prompt en `.agent-task.md` en la raíz del clon, excluido de git, y lo borra al terminar.
+- **Modelo fijado:** `gemini-3.8-flash-high` (`agy models` lista los disponibles); para cambiarlo, `-Model` en los argumentos de la tarea.
 
 Instalación, una sola vez, en PowerShell desde la raíz del repositorio:
 
 ```powershell
-# 1. Iniciar sesión con Google en la configuración del agente (no en la tuya)
-$env:GEMINI_CLI_HOME = "$env:LOCALAPPDATA\smartcity-agent-gemini\home"
-Remove-Item Env:GEMINI_API_KEY -ErrorAction SilentlyContinue   # solo en esta ventana
-gemini                       # elegir "Sign in with Google"; salir con /quit
-# 2. Simulacro y registro de la tarea (corre 8 min después de iniciar sesión y luego cada hora)
-powershell -ExecutionPolicy Bypass -File scripts\agent\run.ps1 -Engine gemini -DryRun
-powershell -ExecutionPolicy Bypass -File scripts\agent\install.ps1 -Engine gemini
+agy                          # si no hay sesión: iniciar con la cuenta de Google; salir con /quit
+powershell -ExecutionPolicy Bypass -File scripts\agent\install.ps1 -Engine gemini     # reglas en settings.json de agy y tarea programada
+powershell -ExecutionPolicy Bypass -File scripts\agent\run.ps1 -Engine gemini -DryRun # simulacro
 ```
 
-Si la sesión de Google vence, la corrida falla con "Gemini no tiene sesion de Google" en la bitácora: repite el paso 1. Para quitarlo: `install.ps1 -Engine gemini -Uninstall`.
+La tarea corre 8 minutos después de iniciar sesión y luego cada hora. Si la sesión de Google vence, la bitácora muestra "agy no tiene sesion de Google": abre `agy` e inicia sesión. Para quitarlo, con sus reglas: `install.ps1 -Engine gemini -Uninstall`.
 
 ## Límites conocidos
 

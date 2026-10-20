@@ -4,8 +4,11 @@
   a few minutes after the current user logs on and then every hour while the
   session is open, so a merged PR is followed by the next task. Idle runs only
   query git and GitHub; they do not use Claude quota. No admin rights needed.
-  With -Engine gemini it registers the second agent (Gemini CLI with a Google
-  account) as its own task, smartcity-agent-gemini, 5 minutes later by default.
+  With -Engine gemini it registers the second agent (Gemini through the
+  Antigravity CLI, agy, with a Google account) as its own task,
+  smartcity-agent-gemini, 5 minutes later by default, and adds the agent's
+  allow and deny rules to agy's settings.json (a backup is kept next to it).
+  -Uninstall removes the task and, for gemini, those rules.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\agent\install.ps1
@@ -22,13 +25,40 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'common.ps1')
 $TaskName = if ($Engine -eq 'gemini') { 'smartcity-agent-gemini' } else { 'smartcity-agent' }
 if ($DelayMinutes -lt 0) { $DelayMinutes = if ($Engine -eq 'gemini') { 8 } else { 3 } }
+
+# Adds (or with -Remove takes out) the agent's rules in agy's settings.json, keeping a backup.
+function Update-AgyRules([switch]$Remove) {
+  $f = Get-AgySettingsPath
+  if (-not (Test-Path $f)) { throw "No existe $f. Abre ``agy`` una vez e inicia sesion con Google." }
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  $text = [IO.File]::ReadAllText($f, $utf8)
+  $cfg = $text | ConvertFrom-Json
+  if (-not (Get-Prop $cfg 'permissions')) { $cfg | Add-Member -NotePropertyName permissions -NotePropertyValue ([pscustomobject]@{}) }
+  foreach ($list in 'allow', 'deny') {
+    $rules = if ($list -eq 'allow') { $AgyAllow } else { $AgyDeny }
+    $current = @(Get-Prop $cfg.permissions $list | Where-Object { $null -ne $_ })
+    $next = if ($Remove) { @($current | Where-Object { $rules -notcontains $_ }) } else { @($current + @($rules | Where-Object { $current -notcontains $_ })) }
+    if ($cfg.permissions.PSObject.Properties[$list]) { $cfg.permissions.$list = $next } else { $cfg.permissions | Add-Member -NotePropertyName $list -NotePropertyValue $next }
+  }
+  $backup = "$f.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+  [IO.File]::WriteAllText($backup, $text, $utf8)
+  [IO.File]::WriteAllText($f, ($cfg | ConvertTo-Json -Depth 32), $utf8)
+  Write-Host "$(if ($Remove) { 'Removed' } else { 'Added' }) the agent rules in $f (backup: $backup)."
+}
 
 if ($Uninstall) {
   Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
   Write-Host "Removed scheduled task '$TaskName'."
+  if ($Engine -eq 'gemini') { Update-AgyRules -Remove }
   return
+}
+if ($Engine -eq 'gemini') {
+  Update-AgyRules
+  Assert-AgySettings
 }
 
 $script = Join-Path $PSScriptRoot 'run.ps1'
