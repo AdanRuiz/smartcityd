@@ -18,6 +18,12 @@ database_name = "smartcity-relay"
 database_id = "882fe619-7ad8-46d5-bb2a-2b556c8c3cb9"
 migrations_dir = "migrations"
 
+# Attachments (`PUT`/`GET /v1/blob`, docs/spec/07) are optional: without this binding the routes answer 404. To enable
+# them, `wrangler r2 bucket create smartcity-blobs` and uncomment (and repeat under [env.b] for the second relay).
+# [[r2_buckets]]
+# binding = "BLOBS"
+# bucket_name = "smartcity-blobs"
+
 # Daily retention (docs/spec/07, "Retención"): expired events, and days older than RETENTION_DAYS only once archived
 # (RELAY-4), and only with TRUST_ANCHORS (ADR-20). Cron Triggers are not inherited by environments either, so env.b
 # repeats it.

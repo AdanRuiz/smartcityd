@@ -1,16 +1,19 @@
 import { MAX_EVENT_BYTES, MAX_FUTURE_SECONDS } from '@smartcity/schemas'
+import { BLOB_MAX_BYTES, BLOB_MIME } from './blob.js'
 import type { Config } from './config.js'
 import { MAX_FILTERS, MAX_LIMIT, MAX_SUBSCRIPTIONS } from './filter.js'
 
 const DAY = 86_400
 
 /** NIP-11 relay information document: limits, policy and retention (docs/spec/07, RELAY-5). */
-export function relayInfo(config: Config) {
+export function relayInfo(config: Config, blobs = false) {
   return {
     name: config.name,
     description: 'Relay de referencia SmartCity: valida firma y esquema de los eventos de docs/spec/03.',
+    // Also where to ask for an attachment to be taken down (docs/spec/08, "Marco legal").
     contact: config.contact || undefined,
-    supported_nips: [1, 9, 11, 13, 40],
+    // 98: the authorization of `PUT /v1/blob`.
+    supported_nips: blobs ? [1, 9, 11, 13, 40, 98] : [1, 9, 11, 13, 40],
     software: 'https://github.com/AdanRuiz/smartcityd/tree/main/services/relay-worker',
     version: '0.1.0',
     limitation: {
@@ -37,6 +40,8 @@ export function relayInfo(config: Config) {
       rate_events_per_min: config.rateEventsPerMin,
       max_event_age_days: config.maxEventAgeDays,
       retention_days: config.retentionDays,
+      // `PUT`/`GET /v1/blob`, optional (docs/spec/07).
+      blobs: blobs ? { max_bytes: BLOB_MAX_BYTES, mime: BLOB_MIME } : undefined,
     },
   }
 }

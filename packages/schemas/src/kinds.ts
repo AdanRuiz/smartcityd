@@ -25,6 +25,10 @@ export const NOSTR_KIND = {
   RELAY_LIST: 10002, // NIP-65
 } as const
 
+// NIP-98 HTTP Auth: the signed authorization of `PUT /v1/blob` (docs/spec/07). Sent in a header, never published,
+// so it is not among the kinds a relay accepts.
+export const HTTP_AUTH_KIND = 27235
+
 export const SYSTEM_KINDS: readonly number[] = Object.values(KIND)
 
 // Kinds a reference relay accepts (docs/spec/07, acceptance step 2).
