@@ -19,13 +19,14 @@ import {
   type Role,
   type SourceContent,
 } from '@smartcity/schemas'
+import { IPFS_GATEWAYS, announcedFiles, daysOf, readArchive, type ArchiveDeps, type ArchiveQuery } from './archive.js'
 import { wins, isWellFormed, type EventTemplate, type NostrEvent, type UnsignedEvent } from './event.js'
 import { matchesAny } from './filter.js'
 import { MAX_CELLS, coverBBox, geoTags, inBBox, roundCoord, type BBox, type LatLon } from './geohash.js'
 import { Pool, isPermanent, normalizeUrl, type PublishResult, type RelayFlags } from './pool.js'
 import { getPow, inlineMiner, type CancelSignal, type Miner } from './pow.js'
 import type { Filter, RelayStatus } from './relay.js'
-import { clearTimer, globalWebSocket, now, setTimer, type WebSocketConstructor } from './runtime.js'
+import { clearTimer, globalFetch, globalWebSocket, now, setTimer, type Fetch, type WebSocketConstructor } from './runtime.js'
 import { generateSecretKey, localSigner, type Signer } from './signer.js'
 import { hasIndexedDb, indexedDbStore, memoryStore, newestFirst, type OutboxEntry, type Store } from './store.js'
 import { TRUST_LEVELS, TrustState, type Signed, type TrustLevel } from './trust.js'
@@ -67,6 +68,10 @@ export interface ClientOptions {
   retryBaseMs?: number
   /** How often the outbox tries again while it has events and no relay reconnected. Default 30 s. */
   outboxRetryMs?: number
+  /** `fetch` for `sc.archive.read`. Default: the global one. */
+  fetch?: Fetch
+  /** Gateways tried for the `cid` of a snapshot, after its `urls`. Default `IPFS_GATEWAYS`. */
+  ipfsGateways?: string[]
 }
 
 export interface PublishOptions {
@@ -267,6 +272,8 @@ export class Client {
   private flushing: Promise<void> | null = null
   private outboxTimer: unknown = null
   private readonly outboxRetryMs: number
+  private readonly fetch: Fetch | undefined
+  private readonly ipfsGateways: string[]
   private closed = false
   private readonly openRelays = new Set<string>()
 
@@ -283,6 +290,8 @@ export class Client {
     this.powBits = options.pow ?? DEFAULT_POW
     this.queryTimeoutMs = options.queryTimeoutMs ?? 5000
     this.outboxRetryMs = options.outboxRetryMs ?? 30_000
+    this.fetch = options.fetch ?? globalFetch()
+    this.ipfsGateways = options.ipfsGateways ?? IPFS_GATEWAYS
     this.store = typeof options.storage === 'object' ? options.storage : memoryStore()
     this.pool = new Pool(WebSocket, options.retryBaseMs)
     for (const url of options.relays ?? SEED_RELAYS) this.pool.add(url)
@@ -953,6 +962,43 @@ export class Client {
         close()
       }
     },
+  }
+
+  // ---------------------------------------------------------------- archive (docs/spec/06, SNAP-6)
+
+  readonly archive = {
+    /**
+     * Events of the city from its snapshots, for days outside the relays' retention: finds the `snapshot` events
+     * of the range on the read relays, downloads each file from its `urls` or its `cid` on an IPFS gateway and keeps
+     * the first copy whose sha256 matches `file.x` and `x`, checks `id`, `sig` and schema of every line (an invalid
+     * one is discarded and reported to `onDiscard`), joins the daily file and its addenda by `id` and applies their
+     * deletions. Oldest first. The events do not enter the local store.
+     */
+    read: (query: ArchiveQuery): AsyncGenerator<NostrEvent, void, undefined> => {
+      const days = daysOf(query)
+      const fetch = this.fetch
+      if (!fetch) throw new Error('no fetch implementation: pass options.fetch')
+      const filter: Filter = { kinds: [KIND.SNAPSHOT], '#c': [this.cityId], '#t': ['daily', 'addendum', 'monthly'], since: days[0]! }
+      if (query.archivers) filter.authors = query.archivers
+      const deps: ArchiveDeps = {
+        fetch,
+        gateways: this.ipfsGateways,
+        check: (raw) => this.checkArchived(raw),
+        onDiscard: query.onDiscard ?? (() => {}),
+      }
+      return this.archiveEvents(filter, query, deps)
+    },
+  }
+
+  private async *archiveEvents(filter: Filter, query: ArchiveQuery, deps: ArchiveDeps): AsyncGenerator<NostrEvent, void, undefined> {
+    yield* readArchive(announcedFiles(await this.query([filter])), query, deps)
+  }
+
+  /** SDK-5 for an archived event: structure, schema of system kinds and `id` + `sig`. No date limit: it is old. */
+  private async checkArchived(raw: unknown): Promise<string | null> {
+    if (!isWellFormed(raw)) return 'not a well-formed event'
+    if (isSystemKind(raw.kind) && !validateEvent(raw).ok) return 'does not match the schema of its kind'
+    return (await this.verifier.verify(raw)) ? null : 'id or sig does not verify'
   }
 
   private async withUpdates(events: NostrEvent[]): Promise<Report[]> {
