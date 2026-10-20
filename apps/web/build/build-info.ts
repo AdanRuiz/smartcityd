@@ -1,6 +1,7 @@
-import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { inThisRepository, runGit, type Git } from './git.ts'
+
+export type { Git }
 
 /** What the "Acerca de" screen shows of this build (APP-10). */
 export interface BuildInfo {
@@ -14,9 +15,6 @@ export interface BuildInfo {
   dirty: boolean
 }
 
-/** Runs git in apps/web and returns its output, or undefined if git is missing or fails. */
-export type Git = (args: string[]) => string | undefined
-
 /** Reads build/commit.txt, which `git archive` fills in (export-subst in .gitattributes). */
 export type ArchiveCommit = () => string | undefined
 
@@ -25,21 +23,8 @@ const COMMIT_VARS = ['CF_PAGES_COMMIT_SHA', 'COMMIT_REF', 'VERCEL_GIT_COMMIT_SHA
 
 const COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
 
-// Where apps/web sits in this repository, as `git rev-parse --show-prefix` prints it from there.
-const PREFIX = 'apps/web/'
-
 // What goes into the bundle, relative to apps/web: the app and the workspace packages it imports.
 export const BUNDLED_PATHS = ['.', '../../packages'] as const
-
-const appDir = fileURLToPath(new URL('..', import.meta.url))
-
-const runGit: Git = (args) => {
-  try {
-    return execFileSync('git', args, { cwd: appDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
-  } catch {
-    return undefined
-  }
-}
 
 const readArchiveCommit: ArchiveCommit = () => {
   try {
@@ -73,7 +58,7 @@ export function buildInfo(
   const explicit = valid(env.SMARTCITY_COMMIT)
   if (explicit) return { version, commit: explicit, dirty: false }
 
-  if (git(['rev-parse', '--show-prefix'])?.trim() === PREFIX) {
+  if (inThisRepository(git)) {
     const head = valid(git(['rev-parse', 'HEAD']))
     if (head) {
       const status = git(['status', '--porcelain', '--', ...BUNDLED_PATHS])

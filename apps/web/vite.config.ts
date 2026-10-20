@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
 import { buildInfo } from './build/build-info.ts'
 import { CSP, SINGLE_FILE, singleFileHtml } from './build/single-file.ts'
+import { SOURCE_DATE_EPOCH, sourceDateEpoch } from './build/source-date-epoch.ts'
 import { BUILD_META } from './src/variant.ts'
 
 /**
@@ -78,6 +79,10 @@ function singleFile(): Plugin {
 // APP-10: version and commit shown in "Acerca de".
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string }
 const info = buildInfo(pkg.version)
+
+// APP-6: the bytes of the build do not read the clock, and anything in the toolchain that dates an output gets
+// SOURCE_DATE_EPOCH: the one given, or the time of the commit. A value that is not seconds stops the build here.
+process.env[SOURCE_DATE_EPOCH] = String(sourceDateEpoch())
 
 export default defineConfig({
   base: './',
