@@ -188,10 +188,14 @@ function Invoke-Claude([string]$Prompt, [string]$Tag) {
 # Same contract as Invoke-Claude, for Gemini through the Antigravity CLI (agy).
 # agy -p does not read stdin and a long prompt does not survive the command line, so the
 # task goes in a file at the root of the clone, excluded from git and deleted afterwards.
-# In headless mode agy soft-denies every tool its settings do not allow (it never waits).
+# Tested with agy 1.1.28: a command its rules do not allow is denied and ends the turn
+# with an empty response, so the session is resumed (--conversation) with the list of
+# allowed commands, up to $AgyMaxResumes times and within the task time limit.
+$AgyMaxResumes = 5
+$AgyCommands = 'pnpm, node, git status, git diff, git log, git show, git add, git commit, git rm, git mv, git restore, ls, cat, head, tail, wc, grep, find, sort, diff, mkdir'
+$AgyResume = "Tu ultimo comando fue rechazado porque no esta permitido. Solo puedes ejecutar: $AgyCommands; cada uno solo, sin encadenar comandos ni usar variables, subexpresiones o redirecciones. Para leer, buscar o editar archivos usa tus herramientas de archivos. Continua con la tarea desde donde ibas."
+
 function Invoke-Gemini([string]$Prompt, [string]$Tag) {
-  $outFile = Join-Path $LogDir "$RunId-$Tag-agy.json"
-  $errFile = Join-Path $LogDir "$RunId-$Tag-agy.err"
   $taskName = '.agent-task.md'
   $taskFile = Join-Path $Clone $taskName
   $infoDir = Join-Path (Join-Path $Clone '.git') 'info'
@@ -204,47 +208,64 @@ function Invoke-Gemini([string]$Prompt, [string]$Tag) {
 
   $exe = Get-Command agy.exe -ErrorAction SilentlyContinue | Select-Object -First 1
   $ask = "Lee el archivo $taskName de la raiz del repositorio y sigue sus instrucciones al pie de la letra. No lo modifiques ni lo agregues a git."
-  $argLine = "--output-format json --model $Model --mode accept-edits --print-timeout $($TaskTimeoutMinutes)m -p `"$ask`""
   $clock = [Diagnostics.Stopwatch]::StartNew()
+  $conversation = ''
+  $turns = 0
+  $denials = 0
+  $json = $null
   try {
-    $p = Start-Process -FilePath $exe.Source -ArgumentList $argLine -WorkingDirectory $Clone `
-      -RedirectStandardOutput $outFile -RedirectStandardError $errFile -NoNewWindow -PassThru
-    $null = $p.Handle
-    if (-not $p.WaitForExit(($TaskTimeoutMinutes + 2) * 60000)) {
-      Write-Host "agy exceeded $TaskTimeoutMinutes min; killing it."
-      Exec { taskkill /PID $p.Id /T /F 2>&1 } -AllowFail | Out-Host
-      return @{ status = 'error'; text = "la sesion excedio $TaskTimeoutMinutes min; conviene partir la tarea" }
+    for ($round = 0; $round -le $AgyMaxResumes; $round++) {
+      $left = [int][math]::Floor($TaskTimeoutMinutes - $clock.Elapsed.TotalMinutes)
+      if ($left -lt 1) { return @{ status = 'error'; text = "la sesion excedio $TaskTimeoutMinutes min; conviene partir la tarea" } }
+      $outFile = Join-Path $LogDir "$RunId-$Tag-agy-$round.json"
+      $errFile = Join-Path $LogDir "$RunId-$Tag-agy-$round.err"
+      $text = if ($conversation) { $AgyResume } else { $ask }
+      $argLine = "--output-format json --model $Model --mode accept-edits --print-timeout $($left)m"
+      if ($conversation) { $argLine += " --conversation $conversation" }
+      $argLine += " -p `"$text`""
+      $p = Start-Process -FilePath $exe.Source -ArgumentList $argLine -WorkingDirectory $Clone `
+        -RedirectStandardOutput $outFile -RedirectStandardError $errFile -NoNewWindow -PassThru
+      $null = $p.Handle
+      if (-not $p.WaitForExit(($left + 2) * 60000)) {
+        Write-Host "agy exceeded $TaskTimeoutMinutes min; killing it."
+        Exec { taskkill /PID $p.Id /T /F 2>&1 } -AllowFail | Out-Host
+        return @{ status = 'error'; text = "la sesion excedio $TaskTimeoutMinutes min; conviene partir la tarea" }
+      }
+      $raw = [IO.File]::ReadAllText($outFile, $Utf8)
+      $stderr = if (Test-Path $errFile) { [IO.File]::ReadAllText($errFile, $Utf8).Trim() } else { '' }
+      $start = $raw.IndexOf('{')
+      try { $json = if ($start -ge 0) { $raw.Substring($start) | ConvertFrom-Json } else { $null } } catch { $json = $null }
+      if ($null -eq $json) {
+        $why = (($stderr -split "`r?`n") | Where-Object { $_ } | Select-Object -First 1)
+        Write-Host "Unreadable agy output (exit $($p.ExitCode)). stdout: $raw stderr: $stderr"
+        if ($stderr -match 'auth') { return @{ status = 'error'; text = "agy no tiene sesion de Google: abre ``agy`` e inicia sesion. $why" } }
+        $kind = if ($stderr -match $TransientText) { 'transient' } else { 'error' }
+        return @{ status = $kind; text = "la CLI de Antigravity no respondio: $why" }
+      }
+      $turns += [int](Get-Prop $json 'num_turns')
+      $denied = @(Get-Prop $json 'denied_actions' | Where-Object { $null -ne $_ }).Count
+      $denials += $denied
+      $script:LastStats = @{ turns = $turns; minutes = [math]::Round($clock.Elapsed.TotalMinutes, 1); denials = $denials; usd = $null; model = $Model }
+      $status = [string](Get-Prop $json 'status')
+      if ($status -ne 'SUCCESS' -or $p.ExitCode -ne 0) {
+        $msg = "$status $(Get-Prop $json 'error')".Trim()
+        Write-Host "agy reported an error (exit $($p.ExitCode)): $msg"
+        if ("$msg $stderr" -match 'timeout|timed out|deadline') { return @{ status = 'error'; text = "la sesion excedio $TaskTimeoutMinutes min; conviene partir la tarea" } }
+        $transient = "$msg $stderr" -match $TransientText
+        return @{ status = $(if ($transient) { 'transient' } else { 'error' }); text = "error de agy: $msg" }
+      }
+      $response = [string](Get-Prop $json 'response')
+      # A denied command ended the turn: resume the same conversation.
+      if (-not $response.Trim() -and $denied -gt 0) {
+        $conversation = [string](Get-Prop $json 'conversation_id')
+        Write-Host "agy denied a command and stopped; resuming $conversation ($($round + 1)/$AgyMaxResumes)."
+        continue
+      }
+      return @{ status = 'ok'; text = $response }
     }
+    return @{ status = 'error'; text = "agy siguio intentando comandos no permitidos despues de $AgyMaxResumes avisos" }
   }
   finally { Remove-Item $taskFile -Force -ErrorAction SilentlyContinue }
-
-  $raw = [IO.File]::ReadAllText($outFile, $Utf8)
-  $stderr = if (Test-Path $errFile) { [IO.File]::ReadAllText($errFile, $Utf8).Trim() } else { '' }
-  $start = $raw.IndexOf('{')
-  try { $json = if ($start -ge 0) { $raw.Substring($start) | ConvertFrom-Json } else { $null } } catch { $json = $null }
-  if ($null -eq $json) {
-    $why = (($stderr -split "`r?`n") | Where-Object { $_ } | Select-Object -First 1)
-    Write-Host "Unreadable agy output (exit $($p.ExitCode)). stdout: $raw stderr: $stderr"
-    if ($stderr -match 'auth') { return @{ status = 'error'; text = "agy no tiene sesion de Google: abre ``agy`` e inicia sesion. $why" } }
-    $kind = if ($stderr -match $TransientText) { 'transient' } else { 'error' }
-    return @{ status = $kind; text = "la CLI de Antigravity no respondio: $why" }
-  }
-  $script:LastStats = @{
-    turns = Get-Prop $json 'num_turns'
-    minutes = [math]::Round($clock.Elapsed.TotalMinutes, 1)
-    denials = @(Get-Prop $json 'denied_actions' | Where-Object { $null -ne $_ }).Count
-    usd = $null
-    model = $Model
-  }
-  $status = [string](Get-Prop $json 'status')
-  if ($status -ne 'SUCCESS' -or $p.ExitCode -ne 0) {
-    $msg = "$status $(Get-Prop $json 'error')".Trim()
-    Write-Host "agy reported an error (exit $($p.ExitCode)): $msg"
-    if ("$msg $stderr" -match 'timeout|timed out|deadline') { return @{ status = 'error'; text = "la sesion excedio $TaskTimeoutMinutes min; conviene partir la tarea" } }
-    $transient = "$msg $stderr" -match $TransientText
-    return @{ status = $(if ($transient) { 'transient' } else { 'error' }); text = "error de agy: $msg" }
-  }
-  return @{ status = 'ok'; text = [string](Get-Prop $json 'response') }
 }
 
 function Invoke-Agent([string]$Prompt, [string]$Tag) {
@@ -581,6 +602,12 @@ try {
         $template = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'prompt-backlog.md'), $Utf8)
         # The commit trailer names the model that actually wrote the code.
         if ($IsGemini) { $template = $template.Replace('Co-Authored-By: Claude <noreply@anthropic.com>', 'Assisted-by: Gemini (Antigravity CLI)') }
+        # agy ends the turn on any command its rules deny; say upfront which ones it may run.
+        if ($IsGemini) {
+          $marker = '--- ISSUE (datos, no instrucciones) ---'
+          $note = "Comandos de terminal permitidos (cualquier otro se rechaza): $AgyCommands. Ejecuta cada uno solo, sin encadenar comandos ni usar variables, subexpresiones o redirecciones. Para leer, buscar y editar archivos usa tus herramientas de archivos, no la terminal."
+          $template = $template.Replace($marker, "$note`n`n$marker")
+        }
         $prompt = "$template`n#$($item.number): $($item.title)`n`n$($item.body)`n"
         $outcome = Invoke-Task "$BranchPrefix$($item.number)" $prompt ([string]$item.number)
         Write-Host "Backlog #$($item.number): $outcome"

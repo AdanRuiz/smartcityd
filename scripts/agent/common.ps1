@@ -43,20 +43,27 @@ function Get-SprintWeek([datetime]$Day = (Get-Date)) {
 # agy has no flag or variable for another config dir, so the agent's rules live in the
 # user's own settings.json. install.ps1 -Engine gemini adds them (and -Uninstall removes
 # them); run.ps1 refuses to start without them. Same lists as $ClaudeSettings in run.ps1.
+#
+# Tested with agy 1.1.28: `*` is not a wildcard (`command(git log)` matches only that exact
+# line), `command(regex:...)` is, and deny wins over allow. A loose `.*` would also let
+# chained commands through (`pnpm test; gh pr create`), so an allowed command may only be
+# followed by plain words or quoted strings with no expansion: no ; & | $ ` % < > ( ) { }.
+# A message with parentheses goes in quotes, as in git commit -m "Relay (RELAY-4)".
+$AgyArg = '("[^"`$%]*"|''[^'']*''|[^\s"''`$%;&|<>(){}]+)'
+# agy is a Go binary: RE2 rejects `\ `, so spaces in the prefix become ` +`.
+function New-AgyAllowRule([string]$Prefix) { return 'command(regex:^{0}( +{1})*$)' -f ([regex]::Escape($Prefix) -replace '\\ ', ' +'), $AgyArg }
 $AgyAllow = @(
-  'command(pnpm *)', 'command(node *)',
-  'command(git status*)', 'command(git diff*)', 'command(git log*)', 'command(git show*)',
-  'command(git add *)', 'command(git commit *)', 'command(git rm *)', 'command(git mv *)', 'command(git restore *)',
-  'command(ls*)', 'command(cat *)', 'command(head *)', 'command(tail *)', 'command(wc *)',
-  'command(grep *)', 'command(find *)', 'command(sort *)', 'command(diff *)', 'command(mkdir *)'
-)
+  'pnpm', 'node',
+  'git status', 'git diff', 'git log', 'git show', 'git add', 'git commit', 'git rm', 'git mv', 'git restore',
+  'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'find', 'sort', 'diff', 'mkdir'
+) | ForEach-Object { New-AgyAllowRule $_ }
+# agy matches a regex against the whole command line, so every deny rule ends in .*
+# (a rule ending in \b never matched `pnpm add left-pad`).
 $AgyDeny = @(
-  'command(git push*)', 'command(git remote*)', 'command(git config*)', 'command(gh)', 'command(gh *)',
-  'command(pnpm *deploy*)', 'command(pnpm *wrangler*)', 'command(pnpm *--remote*)',
-  'command(node *deploy*)', 'command(node *wrangler*)', 'command(node *--remote*)',
-  'command(pnpm add*)', 'command(pnpm remove*)', 'command(pnpm up*)', 'command(pnpm update*)',
-  'command(pnpm dlx*)', 'command(pnpm publish*)', 'command(npx *)', 'command(curl *)', 'command(wget *)',
-  'command(Invoke-WebRequest*)', 'command(Invoke-RestMethod*)', 'command(iwr *)', 'command(irm *)'
+  'command(regex:^git +(push|remote|config)( .*)?$)',
+  'command(regex:^pnpm +(add|remove|rm|up|update|dlx|publish|exec)( .*)?$)',
+  'command(regex:^(pnpm|node) .*(deploy|wrangler|--remote).*$)',
+  'command(regex:^(gh|npx|curl|wget|iwr|irm|Invoke-WebRequest|Invoke-RestMethod|powershell|pwsh|cmd)(\.exe)?( .*)?$)'
 )
 
 function Get-AgySettingsPath {
