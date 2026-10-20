@@ -32,7 +32,7 @@ param(
   [int]$TaskTimeoutMinutes = 45,
   # Pinned so a CLI update cannot silently change the model behind the PRs.
   # Empty means the engine default: claude-opus-5-5, gemini-3.8-flash-high (see `agy models`)
-  # or deepseek/deepseek-v4.1-flash (an OpenRouter model id; never a ~...-latest alias).
+  # or deepseek/deepseek-v4.1-flash-1017 (an OpenRouter model id; never a ~...-latest alias).
   [string]$Model = '',
   [Alias('SkipRoadmap')]
   [switch]$SkipBacklog,
@@ -55,7 +55,7 @@ $IsOpenRouter = $Engine -eq 'openrouter'
 $Lane = if ($IsGemini -or $IsOpenRouter) { 'gemini' } else { 'claude' }
 $InGeminiLane = $Lane -eq 'gemini'
 if (-not $Model) {
-  $Model = if ($IsGemini) { 'gemini-3.8-flash-high' } elseif ($IsOpenRouter) { 'deepseek/deepseek-v4.1-flash' } else { 'claude-opus-5-5' }
+  $Model = if ($IsGemini) { 'gemini-3.8-flash-high' } elseif ($IsOpenRouter) { 'deepseek/deepseek-v4.1-flash-1017' } else { 'claude-opus-5-5' }
 }
 $StateDir = Join-Path $env:LOCALAPPDATA $(if ($Engine -eq 'claude') { 'smartcity-agent' } else { "smartcity-agent-$Engine" })
 $Clone = Join-Path $StateDir 'repo'
@@ -148,8 +148,9 @@ function Test-Checks {
 }
 
 # Errors worth retrying on a later run: quota, rate limits, overload, network.
-# 402 is OpenRouter without credits: retried after the maintainer tops up, never a blocked item.
-$TransientStatus = 402, 429, 500, 502, 503, 504, 529
+# 401 (bad key or expired login) and 402 (OpenRouter without credits) are the maintainer's to fix,
+# not the item's: retried on later runs, never a blocked item.
+$TransientStatus = 401, 402, 429, 500, 502, 503, 504, 529
 $TransientText = 'usage limit|rate limit|limit reached|overloaded|ECONNRESET|ETIMEDOUT|ENOTFOUND|network|socket hang up|RESOURCE_EXHAUSTED|quota|UNAVAILABLE|insufficient credits'
 
 # Returns @{ status = 'ok' | 'transient' | 'error'; text = <result or reason> }.
@@ -532,7 +533,8 @@ try {
     # The one engine that bills per token, on purpose: the user's OpenRouter key (cap its credit
     # limit on openrouter.ai). A config dir of its own keeps the subscription login out of reach.
     $key = $env:OPENROUTER_API_KEY
-    if (-not $key) { $key = [Environment]::GetEnvironmentVariable('OPENROUTER_API_KEY', 'User') }
+    # User first, as Windows does when it builds a new process environment.
+    foreach ($scope in 'User', 'Machine') { if (-not $key) { $key = [Environment]::GetEnvironmentVariable('OPENROUTER_API_KEY', $scope) } }
     if (-not $key) { throw 'OPENROUTER_API_KEY is not set. See docs/operacion/agente.md.' }
     $env:ANTHROPIC_BASE_URL = 'https://openrouter.ai/api'
     $env:ANTHROPIC_AUTH_TOKEN = $key

@@ -16,7 +16,7 @@ Corre 3 minutos después de iniciar sesión y luego cada hora mientras la sesió
    - El PR lleva `Closes #n`. Al mezclarlo, en la siguiente corrida (a más tardar en una hora) arranca el siguiente ítem.
    - Si el ítem no se puede hacer, lo comenta y le pone `agent:bloqueado`, y la siguiente corrida toma otro. Si no cabe en una sesión, responde `PARTIR:` y el script crea los ítems más chicos y cierra el original.
 4. Por cada tarea abre un PR contra `main`. Si `build`, `lint`, `typecheck` o `test` fallan, el PR se abre como borrador. Si el agente no puede resolver un issue, lo comenta y le pone `agent:bloqueado` (a un bug también le quita `agent`).
-5. **Errores pasajeros** (cuota agotada, límite de tasa, API saturada, red caída o la CLI que no responde): la tarea queda como *Reintento* en la bitácora, el issue no se toca, la corrida se detiene y el ítem del backlog no se marca. La siguiente corrida lo reintenta. Que una sesión exceda los 45 min no cuenta como pasajero, porque se repetiría: se marca bloqueada para que la tarea se parta.
+5. **Errores pasajeros** (cuota agotada, límite de tasa, API saturada, red caída, la CLI que no responde, o una llave o sesión inválida: 401): la tarea queda como *Reintento* en la bitácora, el issue no se toca, la corrida se detiene y el ítem del backlog no se marca. La siguiente corrida lo reintenta. Que una sesión exceda los 45 min no cuenta como pasajero, porque se repetiría: se marca bloqueada para que la tarea se parta.
 
 **Nada se mezcla ni se despliega sin una persona.** El mantenedor revisa y mezcla cada PR.
 
@@ -95,11 +95,11 @@ La tarea corre 8 minutos después de iniciar sesión y luego cada hora. Si la se
 Un tercer motor, `run.ps1 -Engine openrouter`, corre Claude Code apuntado a [OpenRouter](https://openrouter.ai/docs/guides/guides/claude-code-integration) con un modelo barato. Sirve para seguir avanzando los ítems de Gemini cuando `agy` se queda sin cuota. **Es el único motor que cuesta dinero:** cobra por token a la llave de OpenRouter del mantenedor.
 
 - **Mismo carril que Gemini:** toma los issues con `gemini`, usa ramas `agent/gemini-<n>` y el mismo candado (mutex) que el agente Gemini. Los dos pueden estar instalados a la vez: nunca corren al mismo tiempo, el PR abierto de uno detiene al otro y ninguno toma un ítem que ya tiene rama. Tampoco toma bugs.
-- **Modelo fijado:** `deepseek/deepseek-v4.1-flash` (en octubre de 2026, US$0.04 por millón de tokens de entrada y US$0.12 de salida). Para cambiarlo, `-Model <id de OpenRouter>`, nunca un alias `~…-latest`. Todos los roles de Claude Code (principal, subagentes y tareas de fondo) van a ese modelo. OpenRouter solo garantiza Claude Code con modelos de Anthropic; si DeepSeek falla con las herramientas, la alternativa barata y compatible es `anthropic/claude-haiku-5.5`.
+- **Modelo fijado:** `deepseek/deepseek-v4.1-flash-1017` (en octubre de 2026, US$0.15 por millón de tokens de entrada y US$0.60 de salida). Para cambiarlo, `-Model <id de OpenRouter>`, nunca un alias `~…-latest`. Todos los roles de Claude Code (principal, subagentes y tareas de fondo) van a ese modelo. OpenRouter solo garantiza Claude Code con modelos de Anthropic; si DeepSeek falla con las herramientas, la alternativa barata y compatible es `anthropic/claude-haiku-5.5`.
 - **Aislado de la suscripción:** usa su propia carpeta de configuración de Claude Code (`CLAUDE_CONFIG_DIR` en `%LOCALAPPDATA%\smartcity-agent-openrouter\claude-config`), así que nunca ve la sesión del mantenedor. Clon y logs, en la misma carpeta.
 - **Costo:** la columna *USD eq. API* queda vacía para este motor, porque Claude Code calcula con tarifas de Anthropic. El gasto real está en el panel de OpenRouter. **Pon un límite de crédito a la llave en openrouter.ai.** Sin crédito, OpenRouter responde 402: la tarea queda como *Reintento* y el ítem no se marca.
 
-Instalación, una sola vez, en PowerShell desde la raíz del repositorio. La llave va en una variable **de usuario**, porque es la única que ve la tarea programada; no la escribas en archivos del repo:
+Instalación, una sola vez, en PowerShell desde la raíz del repositorio. La llave va en una variable **de usuario o de sistema** (no de sesión), porque son las que ve la tarea programada. Si existen las dos, gana la de usuario. No la escribas en archivos del repo:
 
 ```powershell
 [Environment]::SetEnvironmentVariable('OPENROUTER_API_KEY', '<tu llave>', 'User')   # luego abre una terminal nueva
