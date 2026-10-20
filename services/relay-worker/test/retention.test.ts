@@ -191,6 +191,28 @@ describe('retention (docs/spec/07, "Retención", RELAY-4)', () => {
     expect(r.count(OBSERVATIONS)).toBe(4)
   })
 
+  it('when storage is full and nothing can be purged, refuses new writes and deletes nothing (RELAY-4, ADR-20)', async () => {
+    const { r, sk, pk, run } = await setup({}, { anchors: false })
+    // Cap the database at its current size: SQLite then fails writes with SQLITE_FULL, as D1 does past its limit.
+    r.exec(`PRAGMA max_page_count = ${r.count('SELECT page_count AS n FROM pragma_page_count()')}`)
+    const before = r.count('SELECT COUNT(*) AS n FROM events')
+    let accepted = 0
+    let refused: { id: string; message: string } | undefined
+    for (let i = 1; i <= 1000 && !refused; i++) {
+      const event = observation(sk, pk, NOW - i)
+      const result = await r.publish(event)
+      if (result.ok) accepted++
+      else refused = { id: event.id, message: result.message }
+    }
+    expect(refused?.message).toBe('restricted: storage full')
+    expect(r.count(`SELECT COUNT(*) AS n FROM events WHERE id = '${refused?.id}'`)).toBe(0)
+    expect(r.count('SELECT COUNT(*) AS n FROM events')).toBe(before + accepted)
+    // A full relay without anchors still has no archived day to purge for room.
+    const { report } = await run({ [URL_GZ]: SIZE })
+    expect(report.purgedRows).toBe(0)
+    expect(r.count('SELECT COUNT(*) AS n FROM events')).toBe(before + accepted)
+  })
+
   it('does not purge days inside RETENTION_DAYS, nor anything with RETENTION_DAYS=0', async () => {
     const { r, sk, run } = await setup()
     expect((await r.publish(snapshot(sk, 4))).ok).toBe(true)
