@@ -15,13 +15,20 @@ export type WebSocketConstructor = new (url: string) => WebSocketLike
 
 export const OPEN = 1
 
-/** The part of a `fetch` response the archive reader uses. */
+/** The part of a `fetch` response the SDK uses. */
 export interface FetchResponse {
   readonly ok: boolean
   arrayBuffer(): Promise<ArrayBuffer>
 }
 
-export type Fetch = (url: string) => Promise<FetchResponse>
+/** The part of the `fetch` options the SDK uses: only to upload attachments (`PUT /v1/blob`). */
+export interface FetchInit {
+  method: string
+  headers: Record<string, string>
+  body: Uint8Array
+}
+
+export type Fetch = (url: string, init?: FetchInit) => Promise<FetchResponse>
 
 interface Globals {
   setTimeout(fn: () => void, ms: number): unknown
@@ -35,6 +42,7 @@ interface Globals {
   Blob: new (parts: Uint8Array[]) => { stream(): { pipeThrough(transform: unknown): unknown } }
   DecompressionStream: new (format: 'gzip') => unknown
   Response: new (body: unknown) => { arrayBuffer(): Promise<ArrayBuffer> }
+  btoa(data: string): string
 }
 
 export interface ParsedUrl {
@@ -56,9 +64,11 @@ export const globalWebSocket = (): WebSocketConstructor | undefined => g.WebSock
 const encoder = new g.TextEncoder()
 export const byteLength = (text: string): number => encoder.encode(text).length
 
-export const globalFetch = (): Fetch | undefined => (g.fetch ? (url) => g.fetch!(url) : undefined)
+export const globalFetch = (): Fetch | undefined => (g.fetch ? (url, init) => g.fetch!(url, init) : undefined)
 
 export const decodeUtf8 = (bytes: Uint8Array): string => new g.TextDecoder().decode(bytes)
+
+export const base64Utf8 = (text: string): string => g.btoa(Array.from(encoder.encode(text), (b) => String.fromCharCode(b)).join(''))
 
 export async function sha256Hex(data: Uint8Array): Promise<string> {
   const digest = new Uint8Array(await g.crypto.subtle.digest('SHA-256', data))

@@ -61,6 +61,9 @@ export type ReleaseChannel = (typeof RELEASE_CHANNELS)[number]
 export const REPORT_CATEGORIES = ['bache', 'alumbrado', 'fuga', 'basura', 'semaforo', 'arbolado', 'otro'] as const
 
 export const MAX_EVENT_BYTES = 64 * 1024 // NFR-5
+// Attachments (docs/spec/03): report photos, outside the events (DATA-11). Only images, which a browser does not run.
+export const ATTACHMENT_MAX_BYTES = 2 * 1024 * 1024
+export const ATTACHMENT_MIME = ['image/jpeg', 'image/png', 'image/webp'] as const
 export const MAX_FUTURE_SECONDS = 15 * 60 // DATA-4
 export const GEOHASH_PRECISIONS = [4, 5, 6] as const // EVT-3, ADR-17
 export const ANY_CITY = '*'

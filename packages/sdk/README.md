@@ -4,9 +4,9 @@ Cliente del protocolo SmartCity para navegador, Node ≥ 20 y Workers. Especific
 
 Estado (fase 3): cliente, firmantes local y NIP-07, pool de relays con estado, validación al publicar y al recibir, publicación y consulta de `dataset`, `source` y `observation`, agrupación de lecturas; almacén local y cola de salida (IndexedDB o memoria), reportes y `report_update` con llave desechable, refirmado de la cola cuando un relay la encuentra demasiado antigua, niveles de confianza (`sc.trustOf`, roles, moderación) y prueba de trabajo.
 
-Fase 4: historial desde snapshots con `sc.archive.read`.
+Fase 4: historial desde snapshots con `sc.archive.read`; fotos en reportes y actualizaciones (`photos`), subidas a `PUT /v1/blob` de los relays de escritura sin EXIF ni otros metadatos (PRIV-4) y leídas con `sc.attachments.read`, que solo las entrega si su sha256 coincide con `x` (SEC-4).
 
-Pendiente según `09-roadmap.md`: fotos en reportes (adjuntos, PRIV-4, SEC-4); en `sc.archive.read`, descarga por WebTorrent, filtrado en un Web Worker y caché local de los archivos verificados (`06`); `state` y `live` (fase 5); rotación de raíces por mayoría (TRUST-12).
+Pendiente según `09-roadmap.md`: en `sc.archive.read`, descarga por WebTorrent, filtrado en un Web Worker y caché local de los archivos verificados (`06`); `state` y `live` (fase 5); rotación de raíces por mayoría (TRUST-12).
 
 ```ts
 import { createClient, localSigner, generateSecretKey } from '@smartcity/sdk'

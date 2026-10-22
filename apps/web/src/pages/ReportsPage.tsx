@@ -1,5 +1,5 @@
 import { PowCancelled, REPORT_PRECISION, type LatLon, type Report, type ReportStatus, type TrustLevel } from '@smartcity/sdk'
-import { REPORT_CATEGORIES } from '@smartcity/schemas'
+import { REPORT_CATEGORIES, type Attachment } from '@smartcity/schemas'
 import type { GeoJSONSource, Map as MapLibreMap, MapLayerMouseEvent, MapMouseEvent } from 'maplibre-gl'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
@@ -426,6 +426,7 @@ function ReportDetail({ report, onBack, onChanged }: { report: Report; onBack():
         <TrustBadge level={report.trust} />
       </div>
       {report.body && <p className="pre">{report.body}</p>}
+      <Photos attachments={report.attachments} />
       <div className="muted small">
         {report.loc[0]}, {report.loc[1]} · autor <Npub pubkey={report.pubkey} />
       </div>
@@ -452,6 +453,7 @@ function ReportDetail({ report, onBack, onChanged }: { report: Report; onBack():
               </div>
             )}
             {u.body && <p className="pre">{u.body}</p>}
+            <Photos attachments={u.attachments} />
             {u.trust === 'flagged' && <TrustBadge level="flagged" />}
           </li>
         ))}
@@ -494,4 +496,46 @@ function ReportDetail({ report, onBack, onChanged }: { report: Report; onBack():
       )}
     </div>
   )
+}
+
+/**
+ * SEC-4: each photo is downloaded by the SDK, which keeps it only if its sha256 matches the event's, and shown from
+ * a local `blob:` URL; the remote URL is never linked (the CSP has no `https:` in `img-src`).
+ */
+function Photos({ attachments }: { attachments: Attachment[] }) {
+  if (attachments.length === 0) return null
+  return (
+    <div className="photos">
+      {attachments.map((a) => (
+        <Photo key={a.x} attachment={a} />
+      ))}
+    </div>
+  )
+}
+
+function Photo({ attachment }: { attachment: Attachment }) {
+  const { sc } = useApp()
+  const [state, setState] = useState<{ url: string } | 'loading' | 'failed'>('loading')
+  useEffect(() => {
+    let url: string | null = null
+    let cancelled = false
+    setState('loading')
+    sc.attachments
+      .read(attachment)
+      .then(({ data, mime }) => {
+        if (cancelled) return
+        url = URL.createObjectURL(new Blob([data.slice()], { type: mime }))
+        setState({ url })
+      })
+      .catch(() => {
+        if (!cancelled) setState('failed')
+      })
+    return () => {
+      cancelled = true
+      if (url) URL.revokeObjectURL(url)
+    }
+  }, [sc, attachment])
+  if (state === 'loading') return <span className="photo muted small">Verificando foto…</span>
+  if (state === 'failed') return <span className="photo muted small">Foto no disponible o alterada</span>
+  return <img className="photo" src={state.url} alt="Foto del reporte" />
 }

@@ -12,6 +12,7 @@ import {
   parseAddress,
   tagValues,
   validateEvent,
+  type Attachment,
   type CityContent,
   type DatasetContent,
   type ObservationContent,
@@ -29,6 +30,7 @@ import {
   type ArchiveDiscard,
   type ArchiveQuery,
 } from './archive.js'
+import { readAttachment, uploadPhoto, type AttachmentData, type AttachmentDeps, type PhotoInput } from './attachment.js'
 import { wins, isWellFormed, type EventTemplate, type NostrEvent, type UnsignedEvent } from './event.js'
 import { matchesAny } from './filter.js'
 import { MAX_CELLS, coverBBox, geoTags, inBBox, roundCoord, type BBox, type LatLon } from './geohash.js'
@@ -77,9 +79,9 @@ export interface ClientOptions {
   retryBaseMs?: number
   /** How often the outbox tries again while it has events and no relay reconnected. Default 30 s. */
   outboxRetryMs?: number
-  /** `fetch` for `sc.archive.read`. Default: the global one. */
+  /** `fetch` for `sc.archive.read` and the attachments. Default: the global one. */
   fetch?: Fetch
-  /** Gateways tried for the `cid` of a snapshot, after its `urls`. Default `IPFS_GATEWAYS`. */
+  /** Gateways tried for the `cid` of a snapshot after its `urls`, and for `ipfs://` attachments. Default `IPFS_GATEWAYS`. */
   ipfsGateways?: string[]
 }
 
@@ -198,18 +200,24 @@ export interface ReportInput {
   identity?: 'disposable' | 'stable'
   /** PRIV-3: decimals kept of the location. Default 4 (~11 m). */
   precision?: number
+  /** Up to 4 photos (`File`s in the browser), uploaded with the report's key; see `sc.attachments.upload`. */
+  photos?: PhotoInput[]
   signal?: CancelSignal
 }
 
 export interface ReportUpdateInput {
   status?: ReportStatus
   body?: string
+  /** Up to 4 photos, uploaded with the client's key; see `sc.attachments.upload`. */
+  photos?: PhotoInput[]
 }
 
 export interface ReportUpdate extends Signed {
   created_at: number
   status?: ReportStatus
   body?: string
+  /** Photos, as announced: read them with `sc.attachments.read` (SEC-4). */
+  attachments: Attachment[]
   /** Its author has `authority` or `operator`: its status counts (docs/spec/03). Otherwise it is a comment. */
   official: boolean
   trust: TrustLevel
@@ -222,6 +230,8 @@ export interface Report extends Signed {
   title: string
   body?: string
   loc: LatLon
+  /** Photos, as announced: read them with `sc.attachments.read` (SEC-4). */
+  attachments: Attachment[]
   /** Status of the newest official update; `open` without one. */
   status: ReportStatus
   /** The update that sets `status`, if any. */
@@ -258,6 +268,8 @@ export const DEFAULT_POW: Partial<Record<number, number>> = { [KIND.REPORT]: 16 
 /** PRIV-3 */
 export const REPORT_PRECISION = 4
 
+/** docs/spec/03: `attachments` of a report or an update. */
+const MAX_PHOTOS = 4
 const MAX_SEEN = 50_000
 // The reference relay takes at most 80 values per filter (services/relay-worker, filter.ts).
 const IDS_PER_FILTER = 60
@@ -946,11 +958,12 @@ export class Client {
      * location rounded to 4 decimals (PRIV-3). The proof of work of `report` is mined before signing (SPAM-1).
      */
     create: async (input: ReportInput): Promise<PublishResult & { pubkey: string }> => {
-      const { category, title, body, loc, identity = 'disposable', precision = REPORT_PRECISION, signal } = input
+      const { category, title, body, loc, identity = 'disposable', precision = REPORT_PRECISION, photos = [], signal } = input
       const disposable = identity === 'disposable' ? generateSecretKey() : null
       const signer = disposable ? localSigner(disposable) : this.signer
       if (!signer) throw new Error('read-only client: pass a signer, or use a disposable identity')
-      const content: ReportContent = { v: 1, title, ...(body ? { body } : {}), loc: roundTo(loc, precision) }
+      const attachments = await this.uploadPhotos(photos, signer)
+      const content: ReportContent = { v: 1, title, ...(body ? { body } : {}), loc: roundTo(loc, precision), ...attachments }
       const template = { kind: KIND.REPORT, tags: [['t', category.toLowerCase()]], content }
       const result = await this.publishWith(template, { signer, signal }, disposable)
       return { ...result, pubkey: await signer.getPublicKey() }
@@ -963,7 +976,9 @@ export class Client {
     update: async (report: string | { id: string; pubkey: string }, input: ReportUpdateInput): Promise<PublishResult> => {
       const target = typeof report === 'string' ? await this.reports.get(report) : report
       if (!target) throw new Error(`report not found: ${String(report)}`)
-      const content: ReportUpdateContent = { v: 1, ...input }
+      const { photos = [], ...fields } = input
+      const attachments = await this.uploadPhotos(photos, this.signer)
+      const content: ReportUpdateContent = { v: 1, ...fields, ...attachments }
       return this.publish({ kind: KIND.REPORT_UPDATE, tags: [['e', target.id], ['p', target.pubkey]], content })
     },
 
@@ -1007,6 +1022,42 @@ export class Client {
         close()
       }
     },
+  }
+
+  private async uploadPhotos(photos: PhotoInput[], signer: Signer | undefined): Promise<{ attachments?: Attachment[] }> {
+    if (photos.length === 0) return {}
+    if (photos.length > MAX_PHOTOS) throw new Error(`at most ${MAX_PHOTOS} photos`)
+    const attachments: Attachment[] = []
+    for (const photo of photos) attachments.push(await this.attachments.upload(photo, { signer }))
+    return { attachments }
+  }
+
+  // ---------------------------------------------------------------- attachments (docs/spec/03, PRIV-4, SEC-4)
+
+  readonly attachments = {
+    /**
+     * Uploads a photo to every write relay that stores attachments (`PUT /v1/blob`, docs/spec/07) and returns the
+     * attachment to put in an event. Its metadata (EXIF, XMP…) is removed first (PRIV-4); resizing to 1600 px is up
+     * to the app, which can decode the image. Signed by `options.signer` or the client's. `reports.create` with
+     * `photos` does this with the report's key.
+     */
+    upload: async (photo: PhotoInput, options: { signer?: Signer | undefined } = {}): Promise<Attachment> => {
+      const signer = options.signer ?? this.signer
+      if (!signer) throw new Error('read-only client: pass a signer to upload')
+      const writers = this.pool.status().filter((r) => r.write).map((r) => r.url)
+      return uploadPhoto(photo, writers, signer, this.attachmentDeps())
+    },
+
+    /**
+     * SEC-4: the bytes of an attachment, from the first of its `urls` (or IPFS gateway) whose sha256 matches `x`.
+     * Show them from a local `blob:` URL, never by linking the remote one.
+     */
+    read: (attachment: Attachment): Promise<AttachmentData> => readAttachment(attachment, this.attachmentDeps()),
+  }
+
+  private attachmentDeps(): AttachmentDeps {
+    if (!this.fetch) throw new Error('no fetch implementation: pass options.fetch')
+    return { fetch: this.fetch, gateways: this.ipfsGateways }
   }
 
   // ---------------------------------------------------------------- archive (docs/spec/06, SNAP-6)
@@ -1072,6 +1123,7 @@ export class Client {
           created_at: u.created_at,
           ...(c.status ? { status: c.status } : {}),
           ...(c.body ? { body: c.body } : {}),
+          attachments: c.attachments ?? [],
           official: this.trustState.hasRole(u.pubkey, 'authority', 'operator'),
           trust: this.trustState.levelOf(u),
           event: u,
@@ -1089,6 +1141,7 @@ export class Client {
       title: content.title,
       ...(content.body ? { body: content.body } : {}),
       loc: content.loc as LatLon,
+      attachments: content.attachments ?? [],
       status: statusUpdate?.status ?? 'open',
       statusUpdate,
       updates,
