@@ -269,7 +269,7 @@ export const DEFAULT_POW: Partial<Record<number, number>> = { [KIND.REPORT]: 16 
 export const REPORT_PRECISION = 4
 
 /** docs/spec/03: `attachments` of a report or an update. */
-const MAX_PHOTOS = 4
+export const MAX_PHOTOS = 4
 const MAX_SEEN = 50_000
 // The reference relay takes at most 80 values per filter (services/relay-worker, filter.ts).
 const IDS_PER_FILTER = 60

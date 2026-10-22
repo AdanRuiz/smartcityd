@@ -1,6 +1,7 @@
 export {
   Client,
   DEFAULT_POW,
+  MAX_PHOTOS,
   REPORT_PRECISION,
   SEED_RELAYS,
   TRUST_LEVELS,
