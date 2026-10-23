@@ -11,7 +11,7 @@ Pendiente según `09-roadmap.md`: fotos en reportes (PRIV-4, SEC-4), agregados s
 ```sh
 pnpm --filter web dev        # servidor de desarrollo de Vite
 pnpm --filter web build      # dist/: index.html + un JS clásico + un CSS, y dist/smartcity.html (archivo único)
-pnpm --filter web test       # pruebas del armado de smartcity.html
+pnpm --filter web test       # pruebas del armado de smartcity.html y del build reproducible
 pnpm --filter web check      # abre dist/index.html por file:// en Chrome sin interfaz y reporta errores
 pnpm --filter web check file:///<ruta>/dist/smartcity.html
 pnpm --filter web check http://localhost:4173/ --wait 15 --shot captura.png
@@ -20,6 +20,20 @@ pnpm --filter web check http://localhost:4173/ --wait 15 --shot captura.png
 `check` usa Chrome o Edge instalados (variable `CHROME` si están en otro sitio) y sale con error si la consola registra excepciones, errores o violaciones de CSP.
 
 Para ver datos en el mapa sin sensor real: `node packages/sdk/scripts/sensor.mjs <dirección del dataset>` publica una lectura cada 10 s.
+
+### Build reproducible (APP-6)
+
+Mismo commit, mismo `smartcity.html`, en cualquier máquina:
+
+```sh
+git checkout <commit>
+corepack enable                        # usa la versión de pnpm de `packageManager` (12.11.2)
+pnpm install --frozen-lockfile         # versiones exactas del pnpm-lock.yaml
+pnpm --filter web... build             # la app y los paquetes del workspace que importa
+sha256sum apps/web/dist/smartcity.html
+```
+
+Sin `.git` (un tarball, un sandbox) el commit se fija a mano: `SMARTCITY_COMMIT=<commit> pnpm --filter web... build`. `SOURCE_DATE_EPOCH` (segundos desde 1970) fija la hora del build para el toolchain; sin ella se usa la hora del commit, que es igual de determinista, y un valor que no sea un entero de segundos detiene el build. Hoy nada del contenido depende de esa hora ni del huso horario, y `test/reproducible.test.ts` compila dos veces y lo comprueba en cada corrida de las pruebas. El sha256 que sale debe ser el `x` del `release` publicado (DIST-2).
 
 ## Cómo cumple los requisitos
 
@@ -30,6 +44,7 @@ Para ver datos en el mapa sin sensor real: `node packages/sdk/scripts/sensor.mjs
 | APP-3 | Todo va en el paquete. El mapa base no usa capas de etiquetas porque requieren archivos de glifos de un servidor. |
 | APP-4 | El build emite las dos variantes: `dist/` (multiarchivo, con Service Worker) y `dist/smartcity.html`, la misma app en un solo archivo (~2,2 MB) para abrir con doble clic tras bajarlo por torrent, USB o correo. `build/single-file.ts` mete el script y el CSS dentro del HTML (el script al final de `<body>`, porque uno en línea no se puede diferir) y los permite en la CSP por su sha256, sin `unsafe-inline`; sin `'self'` en `worker-src`. Una `<meta name="smartcity-variant" content="single-file">` le dice a la app que no registre el Service Worker aunque un espejo sirva el archivo. Comprobado con `check` desde `file://`: relays conectados y sin violaciones de CSP. |
 | APP-5, REPL-5, TRUST-1 | `src/config.ts`: relays semilla, ciudades con sus llaves raíz y llaves de desarrollador (`DEVELOPERS`, vacías hasta designarlas). El usuario edita los relays en el panel y las llaves de desarrollador en «Acerca de»; se guardan en `localStorage` del origen (APP-11). |
+| APP-6 | Build reproducible. El lockfile de la raíz y `packageManager` (`pnpm@12.11.2`) fijan las dependencias (`pnpm install --frozen-lockfile`), y nada de los bytes sale del reloj: `build/source-date-epoch.ts` lee `SOURCE_DATE_EPOCH` (segundos desde 1970; un valor que no lo sea detiene el build en vez de ignorarse) y, si no está, usa la hora del commit; `vite.config.ts` se la deja al toolchain en el entorno. El commit forma parte de los bytes (APP-10), así que sin `.git` se fija con `SMARTCITY_COMMIT`. `test/reproducible.test.ts` compila dos veces, con husos horarios distintos y una de ellas con `SOURCE_DATE_EPOCH` puesto a mano, y compara el sha256 de `smartcity.html` y el de todo `dist/`; también comprueba que un `SOURCE_DATE_EPOCH` inválido rompe el build. |
 | APP-8 | `src/updates.ts`: al abrir el mapa la app pide a los relays la última versión de cada canal (`release` kind 31486, `d` = `smartcity:stable` y `smartcity:beta`) escrita por las llaves de desarrollador en uso (`config.ts`, editable por el usuario). Solo un evento válido cuyo autor está en esa lista cuenta, y solo si su versión semántica es mayor que la de `package.json`: entonces el aviso aparece sobre todas las páginas y «Acerca de» muestra los canales (descarga de `smartcity.html`, espejos, gateways IPFS y el magnet como texto, SEC-1) con el sha256 esperado. La app no descarga ni ejecuta nada por sí sola (APP-9); «Comprobar de nuevo» repite la consulta. |
 | APP-7 | El build genera `sw.js` con la lista de sus archivos: guarda la interfaz para abrir sin red cuando se sirve por HTTP(S) (comprobado recargando sin red tras la primera visita). Desde `file://` o sin él la app funciona igual. Los datos no pasan por él: viven en IndexedDB. |
 | APP-9 | No descarga ni ejecuta código. |
