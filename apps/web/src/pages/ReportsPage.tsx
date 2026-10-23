@@ -1,10 +1,11 @@
-import { PowCancelled, REPORT_PRECISION, type LatLon, type Report, type ReportStatus, type TrustLevel } from '@smartcity/sdk'
-import { REPORT_CATEGORIES } from '@smartcity/schemas'
+import { MAX_PHOTOS, PowCancelled, REPORT_PRECISION, type LatLon, type Report, type ReportStatus, type TrustLevel } from '@smartcity/sdk'
+import { REPORT_CATEGORIES, type Attachment } from '@smartcity/schemas'
 import type { GeoJSONSource, Map as MapLibreMap, MapLayerMouseEvent, MapMouseEvent } from 'maplibre-gl'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
 import { useApp } from '../client'
 import { BasemapPicker, DEFAULT_LEVELS, Npub, ROLE_LABEL, TrustBadge, TrustFilter, timeAgo } from '../components'
+import { preparePhoto } from '../photo'
 import { readItem, writeItem } from '../settings'
 import { useCityMap, useTiles } from '../useMap'
 
@@ -246,6 +247,9 @@ function StatusChip({ status }: { status: ReportStatus }) {
   )
 }
 
+/** A photo ready to upload (PRIV-4) and its local preview. */
+type LocalPhoto = { blob: Blob; url: string }
+
 function NewReport({ draft, useCenter, onClose }: { draft: LatLon | null; useCenter(): void; onClose(createdId?: string): void }) {
   const { sc, identity } = useApp()
   const [category, setCategory] = useState<string>(REPORT_CATEGORIES[0])
@@ -256,6 +260,36 @@ function NewReport({ draft, useCenter, onClose }: { draft: LatLon | null; useCen
   const [noticeOk, setNoticeOk] = useState(false)
   const [busy, setBusy] = useState<AbortController | null>(null)
   const [result, setResult] = useState<{ error: boolean; text: string; id?: string } | null>(null)
+  const [photos, setPhotos] = useState<LocalPhoto[]>([])
+  const [preparing, setPreparing] = useState(false)
+  const [photoError, setPhotoError] = useState('')
+
+  // The previews are local blob: URLs; free them when the form goes away.
+  const photosRef = useRef(photos)
+  photosRef.current = photos
+  useEffect(() => () => photosRef.current.forEach((p) => URL.revokeObjectURL(p.url)), [])
+
+  const addPhotos = async (files: File[]) => {
+    setPhotoError('')
+    const room = MAX_PHOTOS - photos.length
+    if (files.length > room) setPhotoError(`Máximo ${MAX_PHOTOS} fotos por reporte.`)
+    setPreparing(true)
+    const added: LocalPhoto[] = []
+    for (const file of files.slice(0, Math.max(0, room))) {
+      try {
+        const blob = await preparePhoto(file) // PRIV-4: ≤ 1600 px, no EXIF
+        added.push({ blob, url: URL.createObjectURL(blob) })
+      } catch (error) {
+        setPhotoError(`${file.name}: ${(error as Error).message}`)
+      }
+    }
+    setPhotos((current) => [...current, ...added])
+    setPreparing(false)
+  }
+  const removePhoto = (photo: LocalPhoto) => {
+    URL.revokeObjectURL(photo.url)
+    setPhotos((current) => current.filter((p) => p !== photo))
+  }
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -275,6 +309,7 @@ function NewReport({ draft, useCenter, onClose }: { draft: LatLon | null; useCen
         ...(body.trim() ? { body: body.trim() } : {}),
         loc: draft,
         identity: stable ? 'stable' : 'disposable',
+        ...(photos.length > 0 ? { photos: photos.map((p) => p.blob) } : {}),
         signal: controller.signal,
       })
       if (res.accepted.length > 0) setResult({ error: false, text: `Publicado en ${res.accepted.length} relay(s).`, id: res.id })
@@ -327,6 +362,38 @@ function NewReport({ draft, useCenter, onClose }: { draft: LatLon | null; useCen
         Descripción (opcional)
         <textarea value={body} onChange={(e) => setBody(e.target.value)} maxLength={2000} rows={4} />
       </label>
+      <label>
+        Fotos (opcional, hasta {MAX_PHOTOS})
+        <input
+          type="file"
+          accept="image/*"
+          multiple
+          disabled={preparing || photos.length >= MAX_PHOTOS || busy !== null}
+          onChange={(e) => {
+            const files = Array.from(e.target.files ?? [])
+            e.target.value = ''
+            if (files.length > 0) void addPhotos(files)
+          }}
+        />
+      </label>
+      <p className="muted small">
+        Que no se vean rostros ni matrículas. La foto se reduce a 1600 px y se le quitan los datos de ubicación, cámara y
+        fecha antes de subirla.
+      </p>
+      {preparing && <p className="muted small">Preparando foto…</p>}
+      {photoError && <p className="error">{photoError}</p>}
+      {photos.length > 0 && (
+        <div className="photos">
+          {photos.map((p) => (
+            <span key={p.url} className="photo-draft">
+              <img className="photo" src={p.url} alt="Foto por subir" />
+              <button type="button" className="link" disabled={busy !== null} onClick={() => removePhoto(p)}>
+                Quitar
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <fieldset>
         <legend>Firmar con</legend>
         <label className="check">
@@ -364,7 +431,7 @@ function NewReport({ draft, useCenter, onClose }: { draft: LatLon | null; useCen
           </>
         ) : (
           <>
-            <button type="submit" className="primary">
+            <button type="submit" className="primary" disabled={preparing}>
               Publicar
             </button>
             <button type="button" onClick={() => onClose()}>
@@ -426,6 +493,7 @@ function ReportDetail({ report, onBack, onChanged }: { report: Report; onBack():
         <TrustBadge level={report.trust} />
       </div>
       {report.body && <p className="pre">{report.body}</p>}
+      <Photos attachments={report.attachments} />
       <div className="muted small">
         {report.loc[0]}, {report.loc[1]} · autor <Npub pubkey={report.pubkey} />
       </div>
@@ -452,6 +520,7 @@ function ReportDetail({ report, onBack, onChanged }: { report: Report; onBack():
               </div>
             )}
             {u.body && <p className="pre">{u.body}</p>}
+            <Photos attachments={u.attachments} />
             {u.trust === 'flagged' && <TrustBadge level="flagged" />}
           </li>
         ))}
@@ -494,4 +563,46 @@ function ReportDetail({ report, onBack, onChanged }: { report: Report; onBack():
       )}
     </div>
   )
+}
+
+/**
+ * SEC-4: each photo is downloaded by the SDK, which keeps it only if its sha256 matches the event's, and shown from
+ * a local `blob:` URL; the remote URL is never linked (the CSP has no `https:` in `img-src`).
+ */
+function Photos({ attachments }: { attachments: Attachment[] }) {
+  if (attachments.length === 0) return null
+  return (
+    <div className="photos">
+      {attachments.map((a) => (
+        <Photo key={a.x} attachment={a} />
+      ))}
+    </div>
+  )
+}
+
+function Photo({ attachment }: { attachment: Attachment }) {
+  const { sc } = useApp()
+  const [state, setState] = useState<{ url: string } | 'loading' | 'failed'>('loading')
+  useEffect(() => {
+    let url: string | null = null
+    let cancelled = false
+    setState('loading')
+    sc.attachments
+      .read(attachment)
+      .then(({ data, mime }) => {
+        if (cancelled) return
+        url = URL.createObjectURL(new Blob([data.slice()], { type: mime }))
+        setState({ url })
+      })
+      .catch(() => {
+        if (!cancelled) setState('failed')
+      })
+    return () => {
+      cancelled = true
+      if (url) URL.revokeObjectURL(url)
+    }
+  }, [sc, attachment])
+  if (state === 'loading') return <span className="photo muted small">Verificando foto…</span>
+  if (state === 'failed') return <span className="photo muted small">Foto no disponible o alterada</span>
+  return <img className="photo" src={state.url} alt="Foto del reporte" />
 }

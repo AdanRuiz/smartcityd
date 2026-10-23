@@ -1,6 +1,7 @@
 export {
   Client,
   DEFAULT_POW,
+  MAX_PHOTOS,
   REPORT_PRECISION,
   SEED_RELAYS,
   TRUST_LEVELS,
@@ -26,6 +27,7 @@ export {
   type SourceInput,
 } from './client.js'
 export { IPFS_GATEWAYS, type ArchiveDiscard, type ArchiveQuery } from './archive.js'
+export { stripMetadata, type AttachmentData, type PhotoInput } from './attachment.js'
 export { isWellFormed, wins, type EventTemplate, type NostrEvent, type UnsignedEvent } from './event.js'
 export { matches, matchesAny } from './filter.js'
 export { MAX_CELLS, coverBBox, encodeGeohash, geoTags, inBBox, roundCoord, type BBox, type LatLon } from './geohash.js'
@@ -33,7 +35,7 @@ export type { PublishResult, RelayFlags } from './pool.js'
 export { PowCancelled, getPow, inlineMiner, workerMiner, type CancelSignal, type Miner } from './pow.js'
 export type { Filter, RelayState, RelayStatus } from './relay.js'
 export { APP_SLUG, releaseD, releaseTemplate, type ReleaseInput } from './release.js'
-export type { Fetch, FetchResponse, WebSocketConstructor, WebSocketLike } from './runtime.js'
+export type { Fetch, FetchInit, FetchResponse, WebSocketConstructor, WebSocketLike } from './runtime.js'
 export {
   decryptSecretKey,
   encryptSecretKey,
